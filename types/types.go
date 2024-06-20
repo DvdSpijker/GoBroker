@@ -14,7 +14,15 @@ var supportedSizes = []int{1, 2, 4}
 
 const MaxStringLength = 65535
 
+const (
+  QoS0 QoS = 0b00
+  QoS1 QoS = 0b01
+  QoS2 QoS = 0b10
+)
+
 type (
+  QoS byte
+
 	UnsignedInt struct {
 		Value uint32
 		Size  int
@@ -37,6 +45,7 @@ type (
 		Value int32
 	}
 )
+
 
 func SetBit(b byte, pos uint8) byte {
 	b |= (1 << pos)
@@ -71,19 +80,26 @@ func (integer *UnsignedInt) Encode() ([]byte, error) {
 	return encoded, nil
 }
 
-func (integer *UnsignedInt) Decode(input []byte) error {
-	if !slices.Contains(supportedSizes, len(input)) {
-		return codec.DecodeErr(
+// Size must be set before decoding.
+func (integer *UnsignedInt) Decode(input []byte) (int, error) {
+	if !slices.Contains(supportedSizes, integer.Size) {
+		return 0, codec.DecodeErr(
 			integer,
 			fmt.Sprintf("unsupported size: %d", integer.Size))
 	}
 
-	err := binary.Read(bytes.NewBuffer(input), binary.BigEndian, &integer.Value)
-	if err != nil {
-		return errors.Join(codec.DecodeErr(integer, "buffer read"), err)
-	}
+  input = input[:integer.Size]
+  fmt.Println("unsigned int input", input)
+  switch integer.Size {
+  case 1:
+    integer.Value = uint32(input[0])
+  case 2:
+    integer.Value = uint32(binary.BigEndian.Uint16(input))
+  case 4:
+    integer.Value = uint32(binary.BigEndian.Uint32(input))
+}
 
-	return nil
+	return integer.Size, nil
 }
 
 // Encodes a UTF string as:
@@ -125,7 +141,7 @@ func (utfString *UtfString) Decode(input []byte) (int, error) {
 		utfString.Str += string(input[i])
 	}
 
-	return 0, nil
+	return int(length)+ 2, nil
 }
 
 func (utfString *UtfString) String() string {
@@ -163,7 +179,7 @@ func (utfStringPair *UtfStringPair) Decode(input []byte) error {
 func (binaryData *BinaryData) Encode() ([]byte, error) {
 	encoded := make([]byte, 0, len(binaryData.Data)+2)
 
-	length := UnsignedInt{Value: uint32(len(binaryData.Data))}
+	length := UnsignedInt{Value: uint32(len(binaryData.Data)), Size: 2}
 	encLength, err := length.Encode()
 	if err != nil {
 		return []byte{},
@@ -192,6 +208,21 @@ func (vbi *VariableByteInteger) Encode() (bin []byte, err error) {
 	}
 
 	return bin, nil
+}
+
+func (binaryData *BinaryData) Decode(input []byte) (int, error) {
+  length := UnsignedInt{Size: 2}
+  n, err := length.Decode(input)
+  if err != nil {
+    return 0, err
+  }
+  fmt.Println("payload length", length.Value)
+
+  input = input[n:]
+
+  binaryData.Data = input[:length.Value]
+
+  return n+int(length.Value), nil
 }
 
 func (vbi *VariableByteInteger) Decode(input []byte) (int, error) {

@@ -90,11 +90,19 @@ func handleConnection(conn net.Conn) {
 			if client == nil {
 				panic("pub before con")
 			}
-			parts := strings.SplitN(string(msg[3:]), "-", 2)
-			if len(parts) == 1 {
-				parts = append(parts, "empty")
+      publishPacket := packet.PublishPacket{}
+      n, err := publishPacket.Decode(bytes)
+			if err != nil {
+				fmt.Println("invalid publish packet:", err)
+				panic(err)
 			}
-			publish(client, parts[0], parts[1])
+      bytes = bytes[:n]
+			// parts := strings.SplitN(string(msg[3:]), "-", 2)
+			// if len(parts) == 1 {
+			// 	parts = append(parts, "empty")
+			// }
+      fmt.Println("received publish", publishPacket)
+			publish(client, &publishPacket, bytes)
 		case packet.SUBSCRIBE:
 			if client == nil {
 				panic("sub before con")
@@ -133,8 +141,9 @@ func connect(id string, conn net.Conn) *Client {
 	return client
 }
 
-func publish(client *Client, topic string, payload string) {
-	fmt.Println(client.ID, "published to", topic)
+func publish(client *Client, p *packet.PublishPacket, packetBytes []byte) {
+  topic := p.VariableHeader.TopicName.String()
+	fmt.Println(client.ID, "published", string(p.Payload.BinaryData.Data), "to", topic)
 
 	mutex.Lock()
 	defer mutex.Unlock()
@@ -143,7 +152,8 @@ func publish(client *Client, topic string, payload string) {
 		for _, t := range c.Subscriptions {
 			if topicMatches(t, topic) {
 				fmt.Println(client.ID, "sends to", c.ID, "on topic", topic)
-				_, err := c.Conn.Write([]byte(topic + ": " + payload))
+				// _, err := c.Conn.Write([]byte(topic + ": " + payload))
+				_, err := c.Conn.Write(packetBytes) // Forward the packet as is for now instead of encoding again.
 				if err != nil {
 					panic(err)
 				}
@@ -210,8 +220,9 @@ func readPacket(conn net.Conn) (packet.FixedHeader, []byte, error) {
 		return packet.FixedHeader{}, nil, err
 	}
 
-	println(n)
+	println("read header bytes", n)
 	packetBytes := make([]byte, int(fixedHeader.RemainingLength.Value)-(5-n))
+  println("bytes left to read:", len(packetBytes))
 
 	n, err = conn.Read(packetBytes)
 	if err != nil {
