@@ -1,7 +1,9 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"strings"
 	"sync"
@@ -27,8 +29,10 @@ func main() {
 }
 
 func handleConnection(conn net.Conn) {
+	defer conn.Close()
 	var client *Client
 	for {
+		println("----------")
 		msg := make([]byte, 0)
 
 		// for {
@@ -52,6 +56,10 @@ func handleConnection(conn net.Conn) {
 
 		// fmt.Printf("%#v\n", string(msg))
 		fixedHeader, bytes, err := readPacket(conn)
+		if errors.Is(err, io.EOF) {
+			fmt.Println("client closed connection:", client.ID)
+			return
+		}
 		if err != nil {
 			fmt.Println("packet read error", err)
 			panic("whoop whoop")
@@ -86,6 +94,9 @@ func handleConnection(conn net.Conn) {
 				panic(err)
 			}
 			_ = n
+		case packet.DISCONNECT:
+			println("client disconnecting", client.ID)
+
 		case packet.PUBLISH:
 			if client == nil {
 				panic("pub before con")
@@ -117,6 +128,7 @@ func handleConnection(conn net.Conn) {
 				fmt.Println("failed to encode conack packet:", err)
 				panic(err)
 			}
+			bin = append(bin, 0x00) // the rest of the message is 0 bytes
 			fmt.Printf("pingresp: %x\n", bin)
 			n, err := conn.Write(bin)
 			if err != nil {
