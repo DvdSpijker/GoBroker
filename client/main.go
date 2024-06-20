@@ -31,7 +31,7 @@ func main() {
 
   publish := []byte{
 		0b00110000,
-		12, // rem len
+		7 + 1 + 4, // Remaining length
     0, 5, 't', 'e', '/', 's', 't', // Topic name
     0, // Properties length
     't', 'e', 's', 't',
@@ -45,6 +45,21 @@ func main() {
     panic(fmt.Sprintf("publish n: %d", n))
 	}
 
+  subscribe := []byte{
+		0b10000000,
+		2 + 1 + 8, // Remaining length
+    0x80, 0x08, // Packet identifer
+    0, // Properties length
+    0, 5, 't', 'e', '/', 's', 't', 0, // Topic filter + subscription options
+  }
+
+	n, err = conn.Write(subscribe)
+	if err != nil {
+		panic(err)
+	}
+	if n != len(subscribe) {
+    panic(fmt.Sprintf("subscribe n: %d", n))
+	}
   fmt.Println("done")
 	wg := sync.WaitGroup{}
 	wg.Add(1)

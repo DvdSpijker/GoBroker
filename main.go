@@ -33,28 +33,7 @@ func handleConnection(conn net.Conn) {
 	var client *Client
 	for {
 		println("----------")
-		msg := make([]byte, 0)
 
-		// for {
-		// 	b := make([]byte, blockSize)
-		// 	n, err := conn.Read(b)
-		// 	if err != nil {
-		// 		panic(err)
-		// 	}
-		//
-		// 	b = b[:n]
-		// 	msg = append(msg, b...)
-		//
-		// 	// TODO: we need packet size info
-		// 	// to make this work properly
-		// 	if n < blockSize {
-		// 		break
-		// 	}
-		// }
-
-		// msg = msg[:len(msg)-2]
-
-		// fmt.Printf("%#v\n", string(msg))
 		fixedHeader, bytes, err := readPacket(conn)
 		if errors.Is(err, io.EOF) {
 			fmt.Println("client closed connection:", client.ID)
@@ -67,8 +46,6 @@ func handleConnection(conn net.Conn) {
 
 		// Check message type and call that handler
 
-		//
-		// tmp
 		switch fixedHeader.PacketType {
 		case packet.CONNECT:
 			connectPacket := packet.ConnectPacket{}
@@ -118,7 +95,14 @@ func handleConnection(conn net.Conn) {
 			if client == nil {
 				panic("sub before con")
 			}
-			subscribe(client, string(msg[3:]))
+      subscribePacket := packet.SubscribePacket{}
+      n, err := subscribePacket.Decode(bytes)
+			if err != nil {
+				fmt.Println("invalid subscribe packet:", err)
+				panic(err)
+			}
+      _ = n
+			subscribe(client, subscribePacket.Payload.Filters[0].TopicFilter.String())
 		case packet.PINGREQ:
 			println("pingreq")
 
