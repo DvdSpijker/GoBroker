@@ -90,24 +90,41 @@ func handleConnection(conn net.Conn) {
 			if client == nil {
 				panic("pub before con")
 			}
-      publishPacket := packet.PublishPacket{}
-      n, err := publishPacket.Decode(bytes)
+			publishPacket := packet.PublishPacket{}
+			n, err := publishPacket.Decode(bytes)
 			if err != nil {
 				fmt.Println("invalid publish packet:", err)
 				panic(err)
 			}
-      bytes = bytes[:n]
+			bytes = bytes[:n]
 			// parts := strings.SplitN(string(msg[3:]), "-", 2)
 			// if len(parts) == 1 {
 			// 	parts = append(parts, "empty")
 			// }
-      fmt.Println("received publish", publishPacket)
+			fmt.Println("received publish", publishPacket)
 			publish(client, &publishPacket, bytes)
 		case packet.SUBSCRIBE:
 			if client == nil {
 				panic("sub before con")
 			}
 			subscribe(client, string(msg[3:]))
+		case packet.PINGREQ:
+			println("pingreq")
+
+			pingRespPacket := packet.PingRespPacket{}
+			bin, err := pingRespPacket.Encode()
+			if err != nil {
+				fmt.Println("failed to encode conack packet:", err)
+				panic(err)
+			}
+			fmt.Printf("pingresp: %x\n", bin)
+			n, err := conn.Write(bin)
+			if err != nil {
+				fmt.Println("failed to send conack packet:", err)
+				panic(err)
+			}
+			_ = n
+			println("pingresp written")
 		default:
 			panic("unknown")
 		}
@@ -142,7 +159,7 @@ func connect(id string, conn net.Conn) *Client {
 }
 
 func publish(client *Client, p *packet.PublishPacket, packetBytes []byte) {
-  topic := p.VariableHeader.TopicName.String()
+	topic := p.VariableHeader.TopicName.String()
 	fmt.Println(client.ID, "published", string(p.Payload.Data), "to", topic)
 
 	mutex.Lock()
@@ -153,7 +170,9 @@ func publish(client *Client, p *packet.PublishPacket, packetBytes []byte) {
 			if topicMatches(t, topic) {
 				fmt.Println(client.ID, "sends to", c.ID, "on topic", topic)
 				// _, err := c.Conn.Write([]byte(topic + ": " + payload))
-				_, err := c.Conn.Write(packetBytes) // Forward the packet as is for now instead of encoding again.
+				_, err := c.Conn.Write(
+					packetBytes,
+				) // Forward the packet as is for now instead of encoding again.
 				if err != nil {
 					panic(err)
 				}
@@ -210,9 +229,10 @@ func readPacket(conn net.Conn) (packet.FixedHeader, []byte, error) {
 	if err != nil {
 		return packet.FixedHeader{}, nil, err
 	}
-	if n != 5 {
-		return packet.FixedHeader{}, nil, fmt.Errorf("read %d bytes instead of 5", n)
-	}
+	headerBytesRead := n
+	// if n != 5 {
+	// 	return packet.FixedHeader{}, nil, fmt.Errorf("read %d bytes instead of 5", n)
+	// }
 
 	fixedHeader := packet.FixedHeader{}
 	n, err = fixedHeader.Decode(headerBytes)
@@ -221,8 +241,12 @@ func readPacket(conn net.Conn) (packet.FixedHeader, []byte, error) {
 	}
 
 	println("read header bytes", n)
+	if headerBytesRead < 5 {
+		return fixedHeader, nil, nil
+	}
+
 	packetBytes := make([]byte, int(fixedHeader.RemainingLength.Value)-(5-n))
-  println("bytes left to read:", len(packetBytes))
+	println("bytes left to read:", len(packetBytes))
 
 	n, err = conn.Read(packetBytes)
 	if err != nil {
