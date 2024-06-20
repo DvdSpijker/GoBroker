@@ -103,6 +103,23 @@ func handleConnection(conn net.Conn) {
 			}
       _ = n
 			subscribe(client, subscribePacket.Payload.Filters[0].TopicFilter.String())
+
+      subackPacket := packet.SubackPacket{
+        VariableHeader: packet.SubackVariableHeader{
+          PacketIdentifier: subscribePacket.VariableHeader.PacketIdentifier,
+        },
+        Payload: packet.SubackPayload{
+          ReasonCodes: []packet.ReasonCode{
+            packet.GrantedQoS0,
+          },
+        },
+      }
+      bin, err := subackPacket.Encode()
+      n, err = conn.Write(bin)
+      if err != nil || n != len(bin) {
+        panic("failed to write suback")
+      }
+
 		case packet.PINGREQ:
 			println("pingreq")
 
