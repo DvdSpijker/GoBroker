@@ -31,10 +31,9 @@ func main() {
 
   publish := []byte{
 		0b00110000,
-		14, // rem len
+		12, // rem len
     0, 5, 't', 'e', '/', 's', 't', // Topic name
     0, // Properties length
-    0, 4, // Payload length
     't', 'e', 's', 't',
   }
 

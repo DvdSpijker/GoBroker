@@ -36,10 +36,7 @@ type (
     }
 
     Payload struct {
-      UtfCharacterData types.UtfString // Used if PayloadFormatIndicator is UtfCharacterData
-
-      // BinaryData is always used for now.
-      BinaryData types.BinaryData // Used if PayloadFormatIndicator is UnspecifiedBytes
+      Data []byte
     }
   }
 )
@@ -87,12 +84,8 @@ func (packet *PublishPacket) Decode(input []byte) (int, error) {
   totalRead += n + int(propertyLength.Value) // Pretend properties have been read
   // TODO: Parse properties
 
-  n, err = packet.Payload.BinaryData.Decode(input)
-  if err != nil {
-    fmt.Println("failed to decode payload")
-    return 0, err
-  }
-  totalRead += n
+  packet.Payload.Data = input
+  totalRead += len(input)
   
   return totalRead, nil
 }

@@ -143,7 +143,7 @@ func connect(id string, conn net.Conn) *Client {
 
 func publish(client *Client, p *packet.PublishPacket, packetBytes []byte) {
   topic := p.VariableHeader.TopicName.String()
-	fmt.Println(client.ID, "published", string(p.Payload.BinaryData.Data), "to", topic)
+	fmt.Println(client.ID, "published", string(p.Payload.Data), "to", topic)
 
 	mutex.Lock()
 	defer mutex.Unlock()
