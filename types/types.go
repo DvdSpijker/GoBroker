@@ -176,8 +176,22 @@ func (binaryData *BinaryData) Encode() ([]byte, error) {
 	return encoded, nil
 }
 
-func (vbi *VariableByteInteger) Encode() ([]byte, error) {
-	return nil, nil
+func (vbi *VariableByteInteger) Encode() (bin []byte, err error) {
+	x := vbi.Value
+
+	for {
+		encodedByte := x % 128
+		x = x / 128
+		if x > 0 {
+			encodedByte |= 128
+		}
+		bin = append(bin, byte(encodedByte))
+		if x <= 0 {
+			break
+		}
+	}
+
+	return bin, nil
 }
 
 func (vbi *VariableByteInteger) Decode(input []byte) (int, error) {

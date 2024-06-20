@@ -55,7 +55,6 @@ func handleConnection(conn net.Conn) {
 		if err != nil {
 			fmt.Println("packet read error", err)
 			panic("whoop whoop")
-			continue
 		}
 
 		// Check message type and call that handler
@@ -72,6 +71,21 @@ func handleConnection(conn net.Conn) {
 			}
 			_ = n
 			client = connect(connectPacket.Payload.ClientId.String(), conn)
+
+			conackPacket := packet.ConackPacket{}
+			conackPacket.VariableHeader.ConnectReasonCode = packet.Success
+			bin, err := conackPacket.Encode()
+			if err != nil {
+				fmt.Println("failed to encode conack packet:", err)
+				panic(err)
+			}
+			fmt.Printf("conack: %x\n", bin)
+			n, err = conn.Write(bin)
+			if err != nil {
+				fmt.Println("failed to send conack packet:", err)
+				panic(err)
+			}
+			_ = n
 		case packet.PUBLISH:
 			if client == nil {
 				panic("pub before con")
