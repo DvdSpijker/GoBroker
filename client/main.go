@@ -1,13 +1,14 @@
 package main
 
 import (
+	"fmt"
 	"net"
 	"sync"
-  "fmt"
+	"time"
 )
 
 func main() {
-	conn, err := net.Dial("tcp", "127.0.0.1:8080")
+	conn, err := net.Dial("tcp", "127.0.0.1:1883")
 	if err != nil {
 		panic(err)
 	}
@@ -60,6 +61,11 @@ func main() {
 	if n != len(subscribe) {
     panic(fmt.Sprintf("subscribe n: %d", n))
 	}
+
+  puback := make([]byte, 100)
+  n, err = conn.Read(puback)
+  fmt.Println("puback", puback)
+
   fmt.Println("done")
 	wg := sync.WaitGroup{}
 	wg.Add(1)

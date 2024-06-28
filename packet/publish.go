@@ -62,7 +62,6 @@ func (packet *PublishPacket) Decode(input []byte) (int, error) {
 		fmt.Println("failed to decode topic name")
 		return 0, err
 	}
-	fmt.Println("topic name", packet.VariableHeader.TopicName)
 
 	input = input[n:]
 	totalRead += n
@@ -77,10 +76,8 @@ func (packet *PublishPacket) Decode(input []byte) (int, error) {
 		fmt.Println("failed to decode property length")
 		return 0, err
 	}
-	fmt.Println("property length", propertyLength)
 
 	input = input[n:]
-	fmt.Println("input after property length", input)
 	totalRead += n + int(propertyLength.Value) // Pretend properties have been read
 	// TODO: Parse properties
 

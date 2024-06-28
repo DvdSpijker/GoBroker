@@ -84,10 +84,19 @@ const (
 )
 
 func (fixedHeader *FixedHeader) Encode() ([]byte, error) {
-	var encoded byte = 0
-	encoded = byte(fixedHeader.PacketType)
-	encoded |= byte(fixedHeader.Flags)
-	return []byte{encoded}, nil
+  encoded := make([]byte, 1)
+	encoded[0] = byte(fixedHeader.PacketType)
+	encoded[0] |= byte(fixedHeader.Flags)
+
+  if fixedHeader.RemainingLength.Value > 0 {
+    b, err := fixedHeader.RemainingLength.Encode()
+    if err != nil {
+      return nil, err
+    }
+    return append(encoded, b...), nil
+  }
+
+  return encoded, nil
 }
 
 func (fixedHeader *FixedHeader) Decode(input []byte) (int, error) {
@@ -100,7 +109,6 @@ func (fixedHeader *FixedHeader) Decode(input []byte) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	fmt.Println(fixedHeader)
 	return n + 1, nil
 }
 

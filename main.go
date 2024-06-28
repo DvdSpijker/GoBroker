@@ -7,6 +7,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/DvdSpijker/GoBroker/packet"
 )
@@ -30,6 +31,7 @@ func main() {
 
 func handleConnection(conn net.Conn) {
 	defer conn.Close()
+  defer println("----------")
 	var client *Client
 	for {
 		println("----------")
@@ -48,6 +50,7 @@ func handleConnection(conn net.Conn) {
 
 		switch fixedHeader.PacketType {
 		case packet.CONNECT:
+      fmt.Println("connect")
 			connectPacket := packet.ConnectPacket{}
 			n, err := connectPacket.Decode(bytes)
 			if err != nil {
@@ -64,15 +67,15 @@ func handleConnection(conn net.Conn) {
 				fmt.Println("failed to encode conack packet:", err)
 				panic(err)
 			}
-			fmt.Printf("conack: %x\n", bin)
 			n, err = conn.Write(bin)
 			if err != nil {
 				fmt.Println("failed to send conack packet:", err)
 				panic(err)
 			}
+      fmt.Println("conack")
 			_ = n
 		case packet.DISCONNECT:
-			println("client disconnecting", client.ID)
+      println("client disconnecting:", client.ID)
 
 		case packet.PUBLISH:
 			if client == nil {
@@ -85,16 +88,13 @@ func handleConnection(conn net.Conn) {
 				panic(err)
 			}
 			bytes = bytes[:n]
-			// parts := strings.SplitN(string(msg[3:]), "-", 2)
-			// if len(parts) == 1 {
-			// 	parts = append(parts, "empty")
-			// }
-			fmt.Println("received publish", publishPacket)
 			publish(client, &publishPacket, bytes)
+
 		case packet.SUBSCRIBE:
 			if client == nil {
 				panic("sub before con")
 			}
+      fmt.Println("subscribe")
       subscribePacket := packet.SubscribePacket{}
       n, err := subscribePacket.Decode(bytes)
 			if err != nil {
@@ -115,10 +115,12 @@ func handleConnection(conn net.Conn) {
         },
       }
       bin, err := subackPacket.Encode()
+
       n, err = conn.Write(bin)
       if err != nil || n != len(bin) {
         panic("failed to write suback")
       }
+      fmt.Println("suback")
 
 		case packet.PINGREQ:
 			println("pingreq")
@@ -130,14 +132,13 @@ func handleConnection(conn net.Conn) {
 				panic(err)
 			}
 			bin = append(bin, 0x00) // the rest of the message is 0 bytes
-			fmt.Printf("pingresp: %x\n", bin)
 			n, err := conn.Write(bin)
 			if err != nil {
 				fmt.Println("failed to send conack packet:", err)
 				panic(err)
 			}
 			_ = n
-			println("pingresp written")
+			println("pingresp")
 		default:
 			panic("unknown")
 		}
@@ -243,9 +244,6 @@ func readPacket(conn net.Conn) (packet.FixedHeader, []byte, error) {
 		return packet.FixedHeader{}, nil, err
 	}
 	headerBytesRead := n
-	// if n != 5 {
-	// 	return packet.FixedHeader{}, nil, fmt.Errorf("read %d bytes instead of 5", n)
-	// }
 
 	fixedHeader := packet.FixedHeader{}
 	n, err = fixedHeader.Decode(headerBytes)
@@ -253,7 +251,7 @@ func readPacket(conn net.Conn) (packet.FixedHeader, []byte, error) {
 		return packet.FixedHeader{}, nil, err
 	}
 
-	println("read header bytes", n)
+  println("read header bytes:", n)
 	if headerBytesRead < 5 {
 		return fixedHeader, nil, nil
 	}

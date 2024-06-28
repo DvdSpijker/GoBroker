@@ -1,7 +1,6 @@
 package types
 
 import (
-	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -18,6 +17,7 @@ const (
   QoS0 QoS = 0b00
   QoS1 QoS = 0b01
   QoS2 QoS = 0b10
+  Reserved QoS = 0b11
 )
 
 type (
@@ -70,12 +70,16 @@ func (integer *UnsignedInt) Encode() ([]byte, error) {
 			integer,
 			fmt.Sprintf("unsupported size: %d", integer.Size))
 	}
-	encoded := make([]byte, 0, integer.Size)
+	encoded := make([]byte, integer.Size)
 
-	err := binary.Write(bytes.NewBuffer(encoded), binary.BigEndian, &integer.Value)
-	if err != nil {
-		return []byte{}, errors.Join(codec.EncodeErr(integer, "buffer write"), err)
-	}
+  switch integer.Size {
+  case 1:
+    encoded[0] = uint8(integer.Value)
+  case 2:
+    binary.BigEndian.PutUint16(encoded, uint16(integer.Value))
+  case 4:
+    binary.BigEndian.PutUint32(encoded, uint32(integer.Value))
+}
 
 	return encoded, nil
 }
@@ -89,7 +93,6 @@ func (integer *UnsignedInt) Decode(input []byte) (int, error) {
 	}
 
   input = input[:integer.Size]
-  fmt.Println("unsigned int input", input)
   switch integer.Size {
   case 1:
     integer.Value = uint32(input[0])
@@ -129,11 +132,7 @@ func (utfString *UtfString) Decode(input []byte) (int, error) {
 	if len(input) < 2 {
 		return 0, codec.DecodeErr(utfString, "input must be at least 2 bytes")
 	}
-	// length := int(input[0])
-	// length = length << 8
-	// length += int(input[1])
 	length := binary.BigEndian.Uint16(input[:2])
-	fmt.Println("string length:", length)
 
 	input = input[2:]
 	utfString.Str = ""
@@ -216,8 +215,6 @@ func (binaryData *BinaryData) Decode(input []byte) (int, error) {
   if err != nil {
     return 0, err
   }
-  fmt.Println("payload length", length.Value)
-
   input = input[n:]
 
   binaryData.Data = input[:length.Value]
@@ -233,9 +230,7 @@ func (vbi *VariableByteInteger) Decode(input []byte) (int, error) {
 	multiplier := 1
 	value := 0
 	i := 0
-	fmt.Println("decoding vbi", input[i], input[i]&128)
 	for i = 0; i < 4; i++ {
-		fmt.Println(input[i], value, multiplier)
 		value += int(input[i]&127) * multiplier
 		if multiplier > 128*128*128 {
 			return 0, codec.DecodeErr(vbi, "malformed variable byte integer")

@@ -42,10 +42,6 @@ func (header *ConnectVariableHeader) Decode(input []byte) (int, error) {
 		return n, err
 	}
 
-	println("yeet")
-	println(n)
-	println(vbi.Value)
-	println(10 + n + int(vbi.Value))
 	return 10 + n + int(vbi.Value), nil
 }
 
@@ -68,7 +64,6 @@ func (packet *ConnectPacket) Decode(input []byte) (int, error) {
 		return 0, err
 	}
 	fixedHeaderSize := n
-	fmt.Println("fixed header", packet.FixedHeader)
 
 	input = input[n:]
 	n, err = packet.VariableHeader.Decode(input)
@@ -81,7 +76,6 @@ func (packet *ConnectPacket) Decode(input []byte) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	fmt.Println("payload", packet.Payload)
 
 	return fixedHeaderSize + int(packet.FixedHeader.RemainingLength.Value), nil
 }
