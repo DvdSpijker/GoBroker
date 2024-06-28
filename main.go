@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"slices"
 	"strings"
 	"sync"
 
@@ -38,14 +39,13 @@ func handleConnection(conn net.Conn) {
 		fixedHeader, bytes, err := readPacket(conn)
 		if errors.Is(err, io.EOF) {
 			fmt.Println("client closed connection:", client.ID)
+      disconnect(client)
 			return
 		}
 		if err != nil {
 			fmt.Println("packet read error", err)
 			panic("whoop whoop")
 		}
-
-		// Check message type and call that handler
 
 		switch fixedHeader.PacketType {
 		case packet.CONNECT:
@@ -153,6 +153,7 @@ type Client struct {
 
 var (
 	Clients = make(map[string]*Client)
+  ClientSubscriptions = make(map[string][]*Client)
 	mutex   = sync.Mutex{}
 )
 
@@ -171,6 +172,29 @@ func connect(id string, conn net.Conn) *Client {
 	return client
 }
 
+func disconnect(client *Client) {
+  unsubscribeAll(client)
+
+	mutex.Lock()
+	defer mutex.Unlock()
+  delete(Clients, client.ID)
+}
+
+func unsubscribeAll(client *Client) {
+  for _, topic := range client.Subscriptions {
+    fmt.Println("removing client subscription to", topic)
+    unsubscribeTopic(client, topic)
+  }
+}
+
+func unsubscribeTopic(client *Client, topic string) {
+    mutex.Lock()
+    defer mutex.Unlock()
+
+    index := slices.Index(ClientSubscriptions[topic], client)
+    ClientSubscriptions[topic] = slices.Delete(ClientSubscriptions[topic], index, index+1)
+}
+
 func publish(client *Client, p *packet.PublishPacket, packetBytes []byte) {
 	topic := p.VariableHeader.TopicName.String()
 	fmt.Println(client.ID, "published", string(p.Payload.Data), "to", topic)
@@ -178,20 +202,19 @@ func publish(client *Client, p *packet.PublishPacket, packetBytes []byte) {
 	mutex.Lock()
 	defer mutex.Unlock()
 
-	for _, c := range Clients {
-		for _, t := range c.Subscriptions {
-			if topicMatches(t, topic) {
-				fmt.Println(client.ID, "sends to", c.ID, "on topic", topic)
-				// _, err := c.Conn.Write([]byte(topic + ": " + payload))
-				_, err := c.Conn.Write(
-					packetBytes,
-				) // Forward the packet as is for now instead of encoding again.
-				if err != nil {
-					panic(err)
-				}
-			}
-		}
-	}
+  for t, clients := range ClientSubscriptions {
+    for _, c := range clients {
+      if topicMatches(t, topic) {
+        fmt.Println(client.ID, "sends to", c.ID, "on topic", topic)
+        _, err := c.Conn.Write(
+          packetBytes,
+        ) // Forward the packet as is for now instead of encoding again.
+        if err != nil {
+          panic(err)
+        }
+      }
+    }
+  }
 }
 
 func subscribe(client *Client, topic string) {
@@ -201,6 +224,12 @@ func subscribe(client *Client, topic string) {
 	defer mutex.Unlock()
 
 	client.Subscriptions = append(client.Subscriptions, topic)
+
+  if ClientSubscriptions[topic] == nil {
+    ClientSubscriptions[topic] = make([]*Client, 0, 1)
+  }
+
+  ClientSubscriptions[topic] = append(ClientSubscriptions[topic], client)
 }
 
 // TODO: not very efficient probably
@@ -237,7 +266,8 @@ func topicMatches(filter, name string) bool {
 }
 
 func readPacket(conn net.Conn) (packet.FixedHeader, []byte, error) {
-	headerBytes := make([]byte, 5)
+  const fixedHeaderMaxLength = 5
+	headerBytes := make([]byte, fixedHeaderMaxLength)
 	n, err := conn.Read(headerBytes)
 	if err != nil {
 		return packet.FixedHeader{}, nil, err
@@ -251,11 +281,13 @@ func readPacket(conn net.Conn) (packet.FixedHeader, []byte, error) {
 	}
 
   println("read header bytes:", n)
-	if headerBytesRead < 5 {
+	if headerBytesRead < fixedHeaderMaxLength {
 		return fixedHeader, nil, nil
 	}
 
-	packetBytes := make([]byte, int(fixedHeader.RemainingLength.Value)-(5-n))
+  // Part of the bytes that were read might not be part of the fixed header,
+  // depending on n.
+	packetBytes := make([]byte, int(fixedHeader.RemainingLength.Value)-(fixedHeaderMaxLength-n))
 	println("bytes left to read:", len(packetBytes))
 
 	n, err = conn.Read(packetBytes)
