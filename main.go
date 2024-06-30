@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -9,8 +10,6 @@ import (
 	"github.com/DvdSpijker/GoBroker/packet"
 	"github.com/DvdSpijker/GoBroker/protocol"
 )
-
-const blockSize = 10
 
 func main() {
 	ln, err := net.Listen("tcp", ":8080")
@@ -30,6 +29,10 @@ func main() {
 func handleConnection(conn net.Conn) {
 	defer conn.Close()
   defer println("----------")
+
+  ctx, cancel := context.WithCancel(context.Background())
+  defer cancel()
+
 	var client *Client
 	for {
 		println("----------")
@@ -37,7 +40,7 @@ func handleConnection(conn net.Conn) {
 		fixedHeader, bytes, err := readPacket(conn)
 		if errors.Is(err, io.EOF) {
 			fmt.Println("client closed connection:", client.ID)
-      disconnect(client)
+      client.disconnect()
 			return
 		}
 		if err != nil {
@@ -46,6 +49,7 @@ func handleConnection(conn net.Conn) {
 		}
 
 		switch fixedHeader.PacketType {
+
 		case packet.CONNECT:
       fmt.Println("connect")
 			connectPacket := packet.ConnectPacket{}
@@ -57,6 +61,8 @@ func handleConnection(conn net.Conn) {
 			_ = n
 			client = connect(connectPacket.Payload.ClientId.String(), conn)
 
+      go client.writer(ctx)
+
 			conackPacket := packet.ConackPacket{}
 			conackPacket.VariableHeader.ConnectReasonCode = packet.Success
 			bin, err := conackPacket.Encode()
@@ -64,13 +70,14 @@ func handleConnection(conn net.Conn) {
 				fmt.Println("failed to encode conack packet:", err)
 				panic(err)
 			}
-			n, err = conn.Write(bin)
+			n, err = client.Write(bin)
 			if err != nil {
 				fmt.Println("failed to send conack packet:", err)
 				panic(err)
 			}
       fmt.Println("conack")
 			_ = n
+
 		case packet.DISCONNECT:
       println("client disconnecting:", client.ID)
 
@@ -85,7 +92,7 @@ func handleConnection(conn net.Conn) {
 				panic(err)
 			}
 			bytes = bytes[:n]
-			publish(client, &publishPacket, bytes)
+			client.publish(&publishPacket, bytes)
 
 		case packet.SUBSCRIBE:
 			if client == nil {
@@ -100,12 +107,12 @@ func handleConnection(conn net.Conn) {
 			}
       _ = n
       // TODO: Subscribe to all topics in Filters
-			subscribe(client, subscribePacket.Payload.Filters[0].TopicFilter.String())
+			client.subscribe(subscribePacket.Payload.Filters[0].TopicFilter.String())
 
       subackPacket := protocol.MakeSuback(&subscribePacket)
       bin, err := subackPacket.Encode()
 
-      n, err = conn.Write(bin)
+      n, err = client.Write(bin)
       if err != nil || n != len(bin) {
         panic("failed to write suback")
       }
@@ -121,7 +128,7 @@ func handleConnection(conn net.Conn) {
 				panic(err)
 			}
 			bin = append(bin, 0x00) // the rest of the message is 0 bytes
-			n, err := conn.Write(bin)
+			n, err := client.Write(bin)
 			if err != nil {
 				fmt.Println("failed to send conack packet:", err)
 				panic(err)

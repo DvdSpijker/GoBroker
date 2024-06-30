@@ -6,14 +6,18 @@ import (
   "fmt"
   "slices"
   "strings"
+  "context"
 
 	"github.com/DvdSpijker/GoBroker/packet"
 )
+
+const sendQueueSize = 100
 
 type Client struct {
 	ID            string
 	Conn          net.Conn
 	Subscriptions []string
+  SendQueue chan []byte
 }
 
 var (
@@ -28,31 +32,33 @@ func connect(id string, conn net.Conn) *Client {
 
 	_, ok := Clients[id]
 	if ok {
+    // TODO: Send client a disconnect message instead of panicing
 		panic("client already connected: " + id)
 	}
 
 	fmt.Println(id, "connected")
 	client := &Client{ID: id, Conn: conn}
 	Clients[id] = client
+  client.SendQueue = make(chan []byte, 100)
 	return client
 }
 
-func disconnect(client *Client) {
-  unsubscribeAll(client)
+func (client *Client) disconnect() {
+  client.unsubscribeAll()
 
 	mutex.Lock()
 	defer mutex.Unlock()
   delete(Clients, client.ID)
 }
 
-func unsubscribeAll(client *Client) {
+func (client *Client) unsubscribeAll() {
   for _, topic := range client.Subscriptions {
     fmt.Println("removing client subscription to", topic)
-    unsubscribeTopic(client, topic)
+    client.unsubscribeTopic(topic)
   }
 }
 
-func unsubscribeTopic(client *Client, topic string) {
+func (client *Client) unsubscribeTopic(topic string) {
     mutex.Lock()
     defer mutex.Unlock()
 
@@ -60,7 +66,7 @@ func unsubscribeTopic(client *Client, topic string) {
     ClientSubscriptions[topic] = slices.Delete(ClientSubscriptions[topic], index, index+1)
 }
 
-func publish(client *Client, p *packet.PublishPacket, packetBytes []byte) {
+func (client *Client) publish(p *packet.PublishPacket, packetBytes []byte) {
 	topic := p.VariableHeader.TopicName.String()
 	fmt.Println(client.ID, "published", string(p.Payload.Data), "to", topic)
 
@@ -74,7 +80,7 @@ func publish(client *Client, p *packet.PublishPacket, packetBytes []byte) {
     for _, c := range clients {
       if topicMatches(t, topic) {
         fmt.Println(client.ID, "sends to", c.ID, "on topic", topic)
-        _, err := c.Conn.Write(
+        _, err := c.Write(
           packetBytes,
         ) // Forward the packet as is for now instead of encoding again.
         if err != nil {
@@ -85,7 +91,7 @@ func publish(client *Client, p *packet.PublishPacket, packetBytes []byte) {
   }
 }
 
-func subscribe(client *Client, topic string) {
+func (client *Client) subscribe(topic string) {
 	fmt.Println(client.ID, "subbed to", topic)
 
 	mutex.Lock()
@@ -131,4 +137,32 @@ func topicMatches(filter, name string) bool {
 	}
 
 	return true
+}
+
+// Implements io.Writer
+func (client *Client) Write(p []byte) (n int, err error) {
+  client.SendQueue <- p
+  return len(p), nil
+}
+
+func (client *Client) writer(ctx context.Context) {
+  for {
+    select {
+    case bytes, ok := <-client.SendQueue:
+    if !ok {
+        fmt.Println(client.ID, "send queue closed")
+        return
+      }
+      n, err := client.Conn.Write(bytes)
+      if err != nil {
+        fmt.Println(client.ID, "write error", err)
+      }
+      if n != len(bytes) {
+        fmt.Printf("%s wrote %d of %d bytes\n", client.ID, n, len(bytes))
+      }
+    case <-ctx.Done():
+      fmt.Println(client.ID, "exitting writer")
+      return
+  }
+  }
 }
