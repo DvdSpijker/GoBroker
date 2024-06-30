@@ -13,16 +13,23 @@ import (
 
 const sendQueueSize = 100
 
-type Client struct {
-	ID            string
-	Conn          net.Conn
-	Subscriptions []string
-  SendQueue chan []byte
-}
+type (
+    Client struct {
+    ID            string
+    Conn          net.Conn
+    Subscriptions []string
+    SendQueue chan []byte
+  }
+
+  subscription struct {
+    clients []*Client
+    retainedMessages []*packet.PublishPacket
+  }
+)
 
 var (
 	Clients = make(map[string]*Client)
-  ClientSubscriptions = make(map[string][]*Client)
+  ClientSubscriptions = make(map[string]subscription)
 	mutex   = sync.Mutex{}
 )
 
@@ -62,8 +69,12 @@ func (client *Client) unsubscribeTopic(topic string) {
     mutex.Lock()
     defer mutex.Unlock()
 
-    index := slices.Index(ClientSubscriptions[topic], client)
-    ClientSubscriptions[topic] = slices.Delete(ClientSubscriptions[topic], index, index+1)
+    index := slices.Index(ClientSubscriptions[topic].clients, client)
+    sub := subscription{
+      retainedMessages: ClientSubscriptions[topic].retainedMessages,
+      clients:slices.Delete(ClientSubscriptions[topic].clients, index, index+1),
+    }
+    ClientSubscriptions[topic] = sub
 }
 
 func (client *Client) publish(p *packet.PublishPacket, packetBytes []byte) {
@@ -75,17 +86,19 @@ func (client *Client) publish(p *packet.PublishPacket, packetBytes []byte) {
 
   // Loop over client subscriptions instead of clients because
   // it is more efficient when the largers part of the connected
-  // clients have few subscriptions.cclient
-  for t, clients := range ClientSubscriptions {
-    for _, c := range clients {
+  // clients have few subscriptions.
+  for t, subscription := range ClientSubscriptions {
+    for _, c := range subscription.clients {
       if topicMatches(t, topic) {
-        fmt.Println(client.ID, "sends to", c.ID, "on topic", topic)
-        _, err := c.Write(
-          packetBytes,
-        ) // Forward the packet as is for now instead of encoding again.
-        if err != nil {
-          panic(err)
-        }
+        go func(c *Client) { // Use a goroutine here to avoid blocking by a single client.
+          fmt.Println(client.ID, "sends to", c.ID, "on topic", topic)
+          _, err := c.Write(
+            packetBytes,
+            ) // TODO: Forward the packet as is for now instead of encoding again.
+          if err != nil {
+            fmt.Println("failed to send publish to", c.ID, err)
+          }
+        }(c)
       }
     }
   }
@@ -99,11 +112,18 @@ func (client *Client) subscribe(topic string) {
 
 	client.Subscriptions = append(client.Subscriptions, topic)
 
-  if ClientSubscriptions[topic] == nil {
-    ClientSubscriptions[topic] = make([]*Client, 0, 1)
+  if ClientSubscriptions[topic].clients == nil {
+  ClientSubscriptions[topic] = subscription{
+      clients: make([]*Client, 0, 1),
+      retainedMessages: make([]*packet.PublishPacket, 0),
+    }
   }
 
-  ClientSubscriptions[topic] = append(ClientSubscriptions[topic], client)
+  sub := subscription{
+    retainedMessages: ClientSubscriptions[topic].retainedMessages,
+    clients: append(ClientSubscriptions[topic].clients, client),
+  }
+  ClientSubscriptions[topic] = sub
 }
 
 // TODO: not very efficient probably
