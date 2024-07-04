@@ -92,7 +92,7 @@ func handleConnection(conn net.Conn) {
 				panic(err)
 			}
 			bytes = bytes[:n]
-			client.publish(&publishPacket, bytes)
+			client.onPublish(&publishPacket, bytes)
 
 		case packet.SUBSCRIBE:
 			if client == nil {

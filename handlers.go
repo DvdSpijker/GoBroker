@@ -21,21 +21,75 @@ type (
     SendQueue chan []byte
   }
 
-  subscription struct {
-    clients []*Client
-    retainedMessages []*packet.PublishPacket
-  }
+  clientSubscriptionMap map[string][]*Client
+  retainedMessageMap map[string][][]byte
 )
 
 var (
+	clientsMutex   = sync.Mutex{}
 	Clients = make(map[string]*Client)
-  ClientSubscriptions = make(map[string]subscription)
-	mutex   = sync.Mutex{}
+
+	clientSubscriptionMutex   = sync.Mutex{}
+  ClientSubscriptions = make(clientSubscriptionMap)
+
+	retainedMessagesMutex   = sync.Mutex{}
+  retainedMessages = make(retainedMessageMap)
 )
 
+func (subs clientSubscriptionMap) deleteSubscription(topic string, client *Client) {
+  clientSubscriptionMutex.Lock()
+  defer clientSubscriptionMutex.Unlock()
+
+  index := slices.Index(subs[topic], client)
+  subs[topic]= slices.Delete(subs[topic], index, index+1)
+}
+
+func (subs clientSubscriptionMap) addSubscription(topic string, client *Client) {
+  clientSubscriptionMutex.Lock()
+  defer clientSubscriptionMutex.Unlock()
+
+  if subs[topic] == nil {
+    subs[topic] =  make([]*Client, 0, 1)
+  }
+
+  subs[topic] = append(subs[topic], client)
+}
+
+// TODO: Only pass packet to this function once encode works.
+func (retained retainedMessageMap) addRetainedMessage(topic string, p *packet.PublishPacket, pBytes []byte) {
+  retainedMessagesMutex.Lock()
+  defer retainedMessagesMutex.Unlock()
+
+  if retained[topic] == nil {
+    retained[topic] = make([][]byte, 0, 1)
+  }
+
+  retained[topic] = append(retained[topic], pBytes)
+}
+
+
+func (retained retainedMessageMap) getRetainedMessages(topic string) [][]byte{
+  retainedMessagesMutex.Lock()
+  defer retainedMessagesMutex.Unlock()
+
+  // Direct topic match
+  messages, ok := retained[topic]
+  if ok {
+    return messages
+  }
+
+  for t, messages := range retained {
+    if topicMatches(topic, t) {
+      return messages
+    }
+  }
+
+  return nil
+}
+
 func connect(id string, conn net.Conn) *Client {
-	mutex.Lock()
-	defer mutex.Unlock()
+	clientsMutex.Lock()
+	defer clientsMutex.Unlock()
 
 	_, ok := Clients[id]
 	if ok {
@@ -53,8 +107,8 @@ func connect(id string, conn net.Conn) *Client {
 func (client *Client) disconnect() {
   client.unsubscribeAll()
 
-	mutex.Lock()
-	defer mutex.Unlock()
+	clientsMutex.Lock()
+	defer clientsMutex.Unlock()
   delete(Clients, client.ID)
 }
 
@@ -66,30 +120,27 @@ func (client *Client) unsubscribeAll() {
 }
 
 func (client *Client) unsubscribeTopic(topic string) {
-    mutex.Lock()
-    defer mutex.Unlock()
-
-    index := slices.Index(ClientSubscriptions[topic].clients, client)
-    sub := subscription{
-      retainedMessages: ClientSubscriptions[topic].retainedMessages,
-      clients:slices.Delete(ClientSubscriptions[topic].clients, index, index+1),
-    }
-    ClientSubscriptions[topic] = sub
+  ClientSubscriptions.deleteSubscription(topic, client)
 }
 
-func (client *Client) publish(p *packet.PublishPacket, packetBytes []byte) {
+func (client *Client) onPublish(p *packet.PublishPacket, packetBytes []byte) {
 	topic := p.VariableHeader.TopicName.String()
 	fmt.Println(client.ID, "published", string(p.Payload.Data), "to", topic)
 
-	mutex.Lock()
-	defer mutex.Unlock()
 
+  if p.FixedHeader.Retain {
+    retainedMessages.addRetainedMessage(topic, p, packetBytes)
+    fmt.Println(client.ID, "message retained:", retainedMessages)
+  }
+
+	clientSubscriptionMutex.Lock()
+	defer clientSubscriptionMutex.Unlock()
   // Loop over client subscriptions instead of clients because
   // it is more efficient when the largers part of the connected
   // clients have few subscriptions.
   for t, subscription := range ClientSubscriptions {
-    for _, c := range subscription.clients {
-      if topicMatches(t, topic) {
+    if topicMatches(t, topic) {
+      for _, c := range subscription {
         go func(c *Client) { // Use a goroutine here to avoid blocking by a single client.
           fmt.Println(client.ID, "sends to", c.ID, "on topic", topic)
           _, err := c.Write(
@@ -107,23 +158,20 @@ func (client *Client) publish(p *packet.PublishPacket, packetBytes []byte) {
 func (client *Client) subscribe(topic string) {
 	fmt.Println(client.ID, "subbed to", topic)
 
-	mutex.Lock()
-	defer mutex.Unlock()
+	clientsMutex.Lock()
+	defer clientsMutex.Unlock()
 
 	client.Subscriptions = append(client.Subscriptions, topic)
 
-  if ClientSubscriptions[topic].clients == nil {
-  ClientSubscriptions[topic] = subscription{
-      clients: make([]*Client, 0, 1),
-      retainedMessages: make([]*packet.PublishPacket, 0),
-    }
+  retainedMessages := retainedMessages.getRetainedMessages(topic)
+  fmt.Printf("got retained messages for %s: %d\n", topic, len(retainedMessages))
+  for _, retained := range retainedMessages {
+    fmt.Printf("sending retained message on topic %s to %s\n",topic, client.ID)
+    // TODO: Encode packet, clear necessary flags then encode and send.
+    client.Conn.Write(retained)
   }
 
-  sub := subscription{
-    retainedMessages: ClientSubscriptions[topic].retainedMessages,
-    clients: append(ClientSubscriptions[topic].clients, client),
-  }
-  ClientSubscriptions[topic] = sub
+  ClientSubscriptions.addSubscription(topic, client)
 }
 
 // TODO: not very efficient probably

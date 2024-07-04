@@ -50,9 +50,10 @@ func (packet *PublishPacket) Decode(input []byte) (int, error) {
 		return 0, err
 	}
 
-	packet.FixedHeader.Dup = packet.FixedHeader.CommonFixedHeader.Flags&0b00001000 == 1
+  fmt.Printf("Pub header flags %b\n", packet.FixedHeader.CommonFixedHeader.Flags)
+	packet.FixedHeader.Dup = packet.FixedHeader.CommonFixedHeader.Flags&0b00001000 > 0
 	packet.FixedHeader.Qos = types.QoS(packet.FixedHeader.CommonFixedHeader.Flags & 0b00000110)
-	packet.FixedHeader.Retain = packet.FixedHeader.CommonFixedHeader.Flags&0b00000001 == 1
+	packet.FixedHeader.Retain = packet.FixedHeader.CommonFixedHeader.Flags&0b00000001 > 0
 
 	input = input[n:]
 	totalRead += n
