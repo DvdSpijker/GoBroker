@@ -65,7 +65,7 @@ func (retained retainedMessageMap) addRetainedMessage(topic string, p *packet.Pu
     retained[topic] = nil
     fmt.Println("removed retained message on topic", topic)
   } else {
-    // MQTT-3.3.1-5: New retained message on a topic replaced old.
+    // MQTT-3.3.1-5: New retained message on a topic replaces old.
     retained[topic] = pBytes
   }
 }
@@ -138,6 +138,7 @@ func (client *Client) onPublish(p *packet.PublishPacket, packetBytes []byte) {
 
 	clientSubscriptionMutex.Lock()
 	defer clientSubscriptionMutex.Unlock()
+
   // Loop over client subscriptions instead of clients because
   // it is more efficient when the largers part of the connected
   // clients have few subscriptions.
@@ -210,11 +211,21 @@ func topicMatches(filter, name string) bool {
 }
 
 // Implements io.Writer
+// Write puts the packet bytes in a queue to be handled by
+// the client's writer routine.
 func (client *Client) Write(p []byte) (n int, err error) {
   client.SendQueue <- p
   return len(p), nil
 }
 
+// writer takes packets that have to be sent to this
+// client from a queue.
+// It exits when the context is cancelled.
+//
+// Writing to a client is done like this to avoid mulitple
+// handlers accessing the connection and scrambling packet
+// that way.
+// This way of writing also avoids the need for a lock on the connection.
 func (client *Client) writer(ctx context.Context) {
   for {
     select {
