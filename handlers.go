@@ -1,12 +1,12 @@
 package main
 
 import (
-  "net"
-  "sync"
-  "fmt"
-  "slices"
-  "strings"
-  "context"
+	"context"
+	"fmt"
+	"net"
+	"slices"
+	"strings"
+	"sync"
 
 	"github.com/DvdSpijker/GoBroker/packet"
 )
@@ -22,7 +22,7 @@ type (
   }
 
   clientSubscriptionMap map[string][]*Client
-  retainedMessageMap map[string][]byte
+  retainedMessageMap map[string]*packet.PublishPacket
 )
 
 var (
@@ -66,12 +66,12 @@ func (retained retainedMessageMap) addRetainedMessage(topic string, p *packet.Pu
     fmt.Println("removed retained message on topic", topic)
   } else {
     // MQTT-3.3.1-5: New retained message on a topic replaces old.
-    retained[topic] = pBytes
+    retained[topic] = p
   }
 }
 
 
-func (retained retainedMessageMap) getRetainedMessages(topic string) []byte{
+func (retained retainedMessageMap) getRetainedMessages(topic string) *packet.PublishPacket {
   retainedMessagesMutex.Lock()
   defer retainedMessagesMutex.Unlock()
 
@@ -136,6 +136,12 @@ func (client *Client) onPublish(p *packet.PublishPacket, packetBytes []byte) {
     fmt.Println(client.ID, "message retained:", retainedMessages)
   }
 
+  bytes, err := p.Encode()
+  if err != nil {
+    fmt.Println("failed to encode publish packet", err)
+    return
+  }
+
 	clientSubscriptionMutex.Lock()
 	defer clientSubscriptionMutex.Unlock()
 
@@ -148,7 +154,7 @@ func (client *Client) onPublish(p *packet.PublishPacket, packetBytes []byte) {
         go func(c *Client) { // Use a goroutine here to avoid blocking by a single client.
           fmt.Println(client.ID, "sends to", c.ID, "on topic", topic)
           _, err := c.Write(
-            packetBytes,
+            bytes,
             ) // TODO: Forward the packet as is for now instead of encoding again.
           if err != nil {
             fmt.Println("failed to send publish to", c.ID, err)
@@ -171,7 +177,11 @@ func (client *Client) subscribe(topic string) {
   if retainedMessage != nil {
     fmt.Printf("sending retained message on topic %s to %s\n",topic, client.ID)
     // TODO: Encode packet, clear necessary flags then encode and send.
-    client.Conn.Write(retainedMessage)
+    bytes, err := retainedMessage.Encode()
+    if err != nil {
+      fmt.Println("failed to encode publish message:", err)
+    }
+    client.Conn.Write(bytes)
   }
 
   ClientSubscriptions.addSubscription(topic, client)

@@ -1,6 +1,7 @@
 package packet
 
 import (
+	"encoding/hex"
 	"fmt"
 
 	"github.com/DvdSpijker/GoBroker/types"
@@ -24,7 +25,9 @@ type (
 
 		VariableHeader struct {
 			TopicName              types.UtfString
-			PacketIdentifier       types.UnsignedInt // TODO: Decode packet ID if QoS > 0
+			PacketIdentifier       types.UnsignedInt
+      PropertyLength         types.VariableByteInteger
+      PropertiesRaw          []byte // Temporarily used to store the properties until they are parsed.
 			PayloadFormatIndicator PayloadFormatIndicator
 			MessageExpirtyInterval types.UnsignedInt
 			TopicAlias             types.UnsignedInt
@@ -68,22 +71,90 @@ func (packet *PublishPacket) Decode(input []byte) (int, error) {
 	totalRead += n
 
 	if packet.FixedHeader.Qos > 0 {
-		// TODO: Decode packet identifier
+    packet.VariableHeader.PacketIdentifier.Size = 2
+    n, err := packet.VariableHeader.PacketIdentifier.Decode(input)
+    if err != nil {
+      fmt.Println("failed to decode packet identifier")
+      return 0, err
+    }
+    input = input[n:]
+    totalRead += n
 	}
 
-	propertyLength := types.VariableByteInteger{}
-	n, err = propertyLength.Decode(input)
+	n, err = packet.VariableHeader.PropertyLength.Decode(input)
 	if err != nil {
 		fmt.Println("failed to decode property length")
 		return 0, err
 	}
 
 	input = input[n:]
-	totalRead += n + int(propertyLength.Value) // Pretend properties have been read
-	// TODO: Parse properties
 
+  n = int(packet.VariableHeader.PropertyLength.Value)
+  packet.VariableHeader.PropertiesRaw = input[:n] // TODO: Actually parse properties
+	totalRead += n + int(packet.VariableHeader.PropertyLength.Value) // Pretend properties have been read
+
+	input = input[n:]
 	packet.Payload.Data = input
 	totalRead += len(input)
 
 	return totalRead, nil
+}
+
+func (packet *PublishPacket) Encode() ([]byte, error) {
+  bytes := []byte{}
+
+  b, err := packet.VariableHeader.TopicName.Encode()
+  if err != nil {
+    return nil, err
+  }
+
+  bytes = append(bytes, b...)
+
+  if packet.FixedHeader.Qos > 0 {
+    b, err = packet.VariableHeader.PacketIdentifier.Encode()
+    if err != nil {
+      return nil, err
+    }
+    bytes = append(bytes, b...)
+  }
+
+  if packet.VariableHeader.PropertyLength.Value > 0 || len(packet.Payload.Data) > 0 {
+    b, err = packet.VariableHeader.PropertyLength.Encode()
+    if err != nil {
+      return nil, err
+    }
+    bytes = append(bytes, b...)
+    bytes = append(bytes, packet.VariableHeader.PropertiesRaw...)
+  }
+
+  if len(packet.Payload.Data) > 0 {
+    bytes = append(bytes, packet.Payload.Data...)
+  }
+
+  packet.FixedHeader.CommonFixedHeader.RemainingLength.Value = int32(len(bytes))
+
+  b, err = packet.FixedHeader.CommonFixedHeader.Encode()
+
+  return append(b, bytes...), nil
+}
+
+func (packet *PublishPacket) String() string {
+  return fmt.Sprintf(`PUBLISH
+    Common header: %s
+    Retain: %t
+    QoS: %d
+    Duplicate: %t
+    Topic: %s
+    PropertyLength: %d
+    Properties: %s
+    Payload (%d): %s`,
+    packet.FixedHeader.CommonFixedHeader.String(),
+    packet.FixedHeader.Retain,
+    packet.FixedHeader.Qos,
+    packet.FixedHeader.Dup,
+    packet.VariableHeader.TopicName.String(),
+    packet.VariableHeader.PropertyLength.Value,
+    hex.EncodeToString(packet.VariableHeader.PropertiesRaw),
+    len(packet.Payload.Data),
+    packet.Payload.Data)
 }

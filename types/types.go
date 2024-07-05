@@ -113,9 +113,9 @@ func (utfString *UtfString) Encode() ([]byte, error) {
 			utfString,
 			fmt.Sprintf("unsupported string length: %d", len(utfString.Str)))
 	}
-	encoded := make([]byte, 0, len(utfString.Str)+2)
+	encoded := make([]byte,2)
 
-	length := UnsignedInt{Value: uint32(len(utfString.Str))}
+  length := UnsignedInt{Size: 2, Value: uint32(len(utfString.Str))}
 	encLength, err := length.Encode()
 	if err != nil {
 		return []byte{},
@@ -123,7 +123,7 @@ func (utfString *UtfString) Encode() ([]byte, error) {
 	}
 
 	copy(encoded, encLength)
-	copy(encoded[length.Value:], []byte(utfString.Str))
+  encoded = append(encoded, []byte(utfString.Str)...)
 
 	return encoded, nil
 }
