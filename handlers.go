@@ -22,7 +22,7 @@ type (
   }
 
   clientSubscriptionMap map[string][]*Client
-  retainedMessageMap map[string][][]byte
+  retainedMessageMap map[string][]byte
 )
 
 var (
@@ -60,27 +60,30 @@ func (retained retainedMessageMap) addRetainedMessage(topic string, p *packet.Pu
   retainedMessagesMutex.Lock()
   defer retainedMessagesMutex.Unlock()
 
-  if retained[topic] == nil {
-    retained[topic] = make([][]byte, 0, 1)
+  if len(p.Payload.Data) == 0 {
+    // MQTT-3.3.1-6: If the payload if empty the retained message for a topic is removed.
+    retained[topic] = nil
+    fmt.Println("removed retained message on topic", topic)
+  } else {
+    // MQTT-3.3.1-5: New retained message on a topic replaced old.
+    retained[topic] = pBytes
   }
-
-  retained[topic] = append(retained[topic], pBytes)
 }
 
 
-func (retained retainedMessageMap) getRetainedMessages(topic string) [][]byte{
+func (retained retainedMessageMap) getRetainedMessages(topic string) []byte{
   retainedMessagesMutex.Lock()
   defer retainedMessagesMutex.Unlock()
 
   // Direct topic match
-  messages, ok := retained[topic]
+  message, ok := retained[topic]
   if ok {
-    return messages
+    return message
   }
 
-  for t, messages := range retained {
+  for t, message := range retained {
     if topicMatches(topic, t) {
-      return messages
+      return message
     }
   }
 
@@ -127,7 +130,7 @@ func (client *Client) onPublish(p *packet.PublishPacket, packetBytes []byte) {
 	topic := p.VariableHeader.TopicName.String()
 	fmt.Println(client.ID, "published", string(p.Payload.Data), "to", topic)
 
-
+  // MQTT-3.3.1-8: If the retained flag is not set the message should not be stored.
   if p.FixedHeader.Retain {
     retainedMessages.addRetainedMessage(topic, p, packetBytes)
     fmt.Println(client.ID, "message retained:", retainedMessages)
@@ -163,12 +166,11 @@ func (client *Client) subscribe(topic string) {
 
 	client.Subscriptions = append(client.Subscriptions, topic)
 
-  retainedMessages := retainedMessages.getRetainedMessages(topic)
-  fmt.Printf("got retained messages for %s: %d\n", topic, len(retainedMessages))
-  for _, retained := range retainedMessages {
+  retainedMessage := retainedMessages.getRetainedMessages(topic)
+  if retainedMessage != nil {
     fmt.Printf("sending retained message on topic %s to %s\n",topic, client.ID)
     // TODO: Encode packet, clear necessary flags then encode and send.
-    client.Conn.Write(retained)
+    client.Conn.Write(retainedMessage)
   }
 
   ClientSubscriptions.addSubscription(topic, client)
