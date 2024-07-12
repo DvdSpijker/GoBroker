@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 
 	"github.com/DvdSpijker/GoBroker/packet"
 	"github.com/DvdSpijker/GoBroker/protocol"
@@ -37,9 +38,20 @@ func handleConnection(conn net.Conn) {
 	for {
 		println("----------")
 
+		if client != nil {
+			// Reset keep-alive after receiving a control packet.
+			client.setkeepAliveDeadline()
+		}
 		fixedHeader, bytes, err := readPacket(conn)
+		// Deadline exceeded error occurs when no control packet is received
+		// within the set keep-alive.
 		if errors.Is(err, io.EOF) {
 			fmt.Println("client closed connection:", client.ID)
+			client.disconnect()
+			return
+		} else if errors.Is(err, os.ErrDeadlineExceeded) {
+			fmt.Printf("no control packet received within keep-alive timeout from %s:\n",
+				client.ID)
 			client.disconnect()
 			return
 		}
@@ -59,7 +71,7 @@ func handleConnection(conn net.Conn) {
 				panic(err)
 			}
 			_ = n
-			client = connect(connectPacket.Payload.ClientId.String(), conn)
+			client = connect(connectPacket.Payload.ClientId.String(), conn, &connectPacket)
 
 			go client.writer(ctx)
 

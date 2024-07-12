@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"fmt"
+	"math"
 	"net"
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/DvdSpijker/GoBroker/packet"
 	"github.com/DvdSpijker/GoBroker/protocol"
@@ -20,6 +22,7 @@ type (
 		Conn          net.Conn
 		Subscriptions []string
 		SendQueue     chan []byte
+		KeepAlive     time.Duration
 	}
 
 	clientSubscriptionMap map[string][]*Client
@@ -90,7 +93,7 @@ func (retained retainedMessageMap) getRetainedMessages(topic string) *packet.Pub
 	return nil
 }
 
-func connect(id string, conn net.Conn) *Client {
+func connect(id string, conn net.Conn, p *packet.ConnectPacket) *Client {
 	clientsMutex.Lock()
 	defer clientsMutex.Unlock()
 
@@ -104,7 +107,14 @@ func connect(id string, conn net.Conn) *Client {
 	client := &Client{ID: id, Conn: conn}
 	Clients[id] = client
 	client.SendQueue = make(chan []byte, 100)
+	// 3.1.2-22: The server allows 1.5x the keep-alive period between control packets.
+	client.KeepAlive = time.Second * time.Duration(
+		math.Round(float64(p.VariableHeader.KeepAlive.Value)*float64(1.5)))
 	return client
+}
+
+func (client *Client) setkeepAliveDeadline() {
+	client.Conn.SetReadDeadline(time.Now().Add(client.KeepAlive))
 }
 
 func (client *Client) disconnect() {
