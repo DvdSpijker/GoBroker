@@ -47,3 +47,44 @@ func (packet *PubackPacket) Encode() ([]byte, error) {
 
   return append(b, bytes...), nil
 }
+
+func (packet *PubackPacket) Decode(input []byte) (int, error) {
+  totalRead := 0
+
+  n, err := packet.FixedHeader.Decode(input)
+  if err != nil {
+    return 0, err
+  }
+
+  totalRead += n
+  input = input[n:]
+
+  if len(input) > 0 {
+    packet.VariableHeader.PacketIdentifer.Size = 2
+  n, err = packet.VariableHeader.PacketIdentifer.Decode(input)
+  if err != nil {
+    return 0, err
+  }
+  totalRead += n
+  input = input[n:]
+  }
+
+
+  if len(input) > 0 {
+    packet.VariableHeader.ReasonCode = ReasonCode(input[0])
+    totalRead += 1
+    input = input[1:]
+  }
+
+  if len(input) > 0 {
+    n, err := packet.VariableHeader.PropertyLength.Decode(input)
+    if err != nil {
+      return 0, err
+    }
+    // TODO: Read the properties.
+    totalRead += n + int(packet.VariableHeader.PropertyLength.Value)
+    input = input[n:]
+  }
+
+  return totalRead, nil
+}
