@@ -16,3 +16,15 @@ func MakeSuback(subscribePacket *packet.SubscribePacket) *packet.SubackPacket {
 
   return &subackPacket
 }
+
+func MakePuback(publishPacket *packet.PublishPacket) *packet.PubackPacket {
+  pubackPacket := packet.PubackPacket{
+    VariableHeader: packet.PubackVariableHeader{
+      PacketIdentifer: publishPacket.VariableHeader.PacketIdentifier,
+    },
+  }
+
+  pubackPacket.VariableHeader.PropertyLength.Value = 0
+
+  return &pubackPacket
+}

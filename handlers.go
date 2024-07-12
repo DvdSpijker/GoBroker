@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/DvdSpijker/GoBroker/packet"
+	"github.com/DvdSpijker/GoBroker/protocol"
 )
 
 const sendQueueSize = 100
@@ -134,6 +135,18 @@ func (client *Client) onPublish(p *packet.PublishPacket, packetBytes []byte) {
   if p.FixedHeader.Retain {
     retainedMessages.addRetainedMessage(topic, p, packetBytes)
     fmt.Println(client.ID, "message retained:", retainedMessages)
+  }
+
+  if p.FixedHeader.Qos > 0 {
+    fmt.Printf("puback to %s on %s\n", client.ID, topic)
+    pubackPacket := protocol.MakePuback(p)
+    bytes, err := pubackPacket.Encode()
+    if err != nil {
+      fmt.Println("failed to encode puback packet:", err)
+    }
+    go func(client *Client, bytes []byte) {
+      client.Write(bytes)
+    }(client, bytes)
   }
 
   bytes, err := p.Encode()

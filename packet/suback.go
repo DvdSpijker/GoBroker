@@ -18,8 +18,6 @@ const (
   WildCardSubscriptionsNotSUpported ReasonCode = 0xA2
 )
 type (
-  ReasonCode byte
-
   SubackVariableHeader struct {
     PacketIdentifier types.UnsignedInt
     PropertyLength types.VariableByteInteger

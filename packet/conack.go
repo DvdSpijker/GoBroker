@@ -8,7 +8,7 @@ type (
 	ConackVariableHeader struct {
 		VariableHeaderBase      VariableHeaderBase
 		ConnectAcknowledgeFlags byte
-		ConnectReasonCode       ConnectReasonCode
+		ConnectReasonCode      ReasonCode
 	}
 
 	ConackPacket struct {
@@ -16,37 +16,11 @@ type (
 		VariableHeader ConackVariableHeader
 	}
 
-	ConnectReasonCode      byte
 	ConnectAcknowledgeFlag byte
 )
 
 const (
 	SessionPresent ConnectAcknowledgeFlag = 0b10000000
-)
-
-const (
-	Success                     ConnectReasonCode = 0x00
-	UnspecifiedError            ConnectReasonCode = 0x80
-	MalformedPacket             ConnectReasonCode = 0x81
-	ProtocolError               ConnectReasonCode = 0x82
-	ImplementationSpecificError ConnectReasonCode = 0x83
-	UnsupportedProtocolVersion  ConnectReasonCode = 0x84
-	ClientIdentifierNotValid    ConnectReasonCode = 0x85
-	BadUserNameOrPassword       ConnectReasonCode = 0x86
-	NotAuthenterized            ConnectReasonCode = 0x87
-	ServerUnavailable           ConnectReasonCode = 0x88
-	ServerBusy                  ConnectReasonCode = 0x89
-	Banned                      ConnectReasonCode = 0x8A
-	BadAuthenticationMethod     ConnectReasonCode = 0x8C
-	TopicNameInvalid            ConnectReasonCode = 0x90
-	PacketTooLarge              ConnectReasonCode = 0x95 // (That's what she said)
-	QuotaExceeded               ConnectReasonCode = 0x97
-	PayloadFormatInvalid        ConnectReasonCode = 0x99
-	RetainNotSupported          ConnectReasonCode = 0x9A
-	QosNotSupported             ConnectReasonCode = 0x9B
-	UseAnotherServer            ConnectReasonCode = 0x9C
-	ServerMoved                 ConnectReasonCode = 0x9D
-	ConnectionRateExceeded      ConnectReasonCode = 0x9F
 )
 
 func (packet ConackPacket) Encode() (bin []byte, err error) {

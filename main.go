@@ -94,6 +94,10 @@ func handleConnection(conn net.Conn) {
 			bytes = bytes[:n]
 			client.onPublish(&publishPacket, bytes)
 
+    case packet.PUBACK:
+      fmt.Println("puback")
+      // TODO: Process puback
+
 		case packet.SUBSCRIBE:
 			if client == nil {
 				panic("sub before con")
