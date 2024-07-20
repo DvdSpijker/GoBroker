@@ -12,11 +12,18 @@ import (
 
 	"github.com/DvdSpijker/GoBroker/packet"
 	"github.com/DvdSpijker/GoBroker/protocol"
+	"github.com/DvdSpijker/GoBroker/types"
 )
 
 const sendQueueSize = 100
 
 type (
+	LastWill struct {
+		Qos     types.QoS
+		Retain  bool
+		Topic   string
+		Payload types.BinaryData
+	}
 	Client struct {
 		ID            string
 		Conn          net.Conn
@@ -60,7 +67,7 @@ func (subs clientSubscriptionMap) addSubscription(topic string, client *Client) 
 }
 
 // TODO: Only pass packet to this function once encode works.
-func (retained retainedMessageMap) addRetainedMessage(topic string, p *packet.PublishPacket, pBytes []byte) {
+func (retained retainedMessageMap) addRetainedMessage(topic string, p *packet.PublishPacket) {
 	retainedMessagesMutex.Lock()
 	defer retainedMessagesMutex.Unlock()
 
@@ -110,11 +117,16 @@ func connect(id string, conn net.Conn, p *packet.ConnectPacket) *Client {
 	// 3.1.2-22: The server allows 1.5x the keep-alive period between control packets.
 	client.KeepAlive = time.Second * time.Duration(
 		math.Round(float64(p.VariableHeader.KeepAlive.Value)*float64(1.5)))
+
 	return client
 }
 
 func (client *Client) setkeepAliveDeadline() {
-	client.Conn.SetReadDeadline(time.Now().Add(client.KeepAlive))
+	// 3.1.2.10: A keep-alive value of 0 has the effect of turning
+	// of the Keep-Alive mechanism.
+	if client.KeepAlive > 0 {
+		client.Conn.SetReadDeadline(time.Now().Add(client.KeepAlive))
+	}
 }
 
 func (client *Client) disconnect() {
@@ -136,13 +148,13 @@ func (client *Client) unsubscribeTopic(topic string) {
 	ClientSubscriptions.deleteSubscription(topic, client)
 }
 
-func (client *Client) onPublish(p *packet.PublishPacket, packetBytes []byte) {
+func (client *Client) onPublish(p *packet.PublishPacket) {
 	topic := p.VariableHeader.TopicName.String()
 	fmt.Println(client.ID, "published", string(p.Payload.Data), "to", topic)
 
 	// MQTT-3.3.1-8: If the retained flag is not set the message should not be stored.
 	if p.FixedHeader.Retain {
-		retainedMessages.addRetainedMessage(topic, p, packetBytes)
+		retainedMessages.addRetainedMessage(topic, p)
 		fmt.Println(client.ID, "message retained:", retainedMessages)
 	}
 

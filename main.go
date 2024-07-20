@@ -43,8 +43,6 @@ func handleConnection(conn net.Conn) {
 			client.setkeepAliveDeadline()
 		}
 		fixedHeader, bytes, err := readPacket(conn)
-		// Deadline exceeded error occurs when no control packet is received
-		// within the set keep-alive.
 		if errors.Is(err, io.EOF) {
 			fmt.Println("client closed connection:", client.ID)
 			client.disconnect()
@@ -71,6 +69,7 @@ func handleConnection(conn net.Conn) {
 				panic(err)
 			}
 			_ = n
+			fmt.Println(connectPacket.String())
 			client = connect(connectPacket.Payload.ClientId.String(), conn, &connectPacket)
 
 			go client.writer(ctx)
@@ -103,8 +102,8 @@ func handleConnection(conn net.Conn) {
 				fmt.Println("invalid publish packet:", err)
 				panic(err)
 			}
-			bytes = bytes[:n]
-			client.onPublish(&publishPacket, bytes)
+			_ = n
+			client.onPublish(&publishPacket)
 
 		case packet.PUBACK:
 			fmt.Println("puback")

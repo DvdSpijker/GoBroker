@@ -7,13 +7,8 @@ import (
 	"github.com/DvdSpijker/GoBroker/types"
 )
 
-const (
-	UnspecifiedBytes PayloadFormatIndicator = 0x00
-	UtfCharacterData PayloadFormatIndicator = 0x01
-)
 
 type (
-	PayloadFormatIndicator byte
 
 	PublishPacket struct {
 		FixedHeader struct {

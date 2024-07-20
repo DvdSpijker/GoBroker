@@ -168,9 +168,9 @@ func (utfStringPair *UtfStringPair) Encode() ([]byte, error) {
 	return encoded, nil
 }
 
-func (utfStringPair *UtfStringPair) Decode(input []byte) error {
+func (utfStringPair *UtfStringPair) Decode(input []byte) (int, error) {
 	// TODO: Decode utf string pair
-	return nil
+	return 0, nil
 }
 
 // Encodes binary data as:
