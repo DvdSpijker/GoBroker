@@ -19,17 +19,28 @@ const sendQueueSize = 100
 
 type (
 	LastWill struct {
-		Qos     types.QoS
-		Retain  bool
-		Topic   string
-		Payload types.BinaryData
+		WillFlag   bool
+		Qos        types.QoS
+		Retain     bool
+		Topic      string
+		Payload    []byte
+		Properties struct {
+			DelayInterval         time.Duration
+			MessageExpiryInterval time.Duration
+			ContentType           string
+			ReponseTopic          string
+			CorrelationData       []byte
+			// TODO: All properties
+		}
 	}
+
 	Client struct {
 		ID            string
 		Conn          net.Conn
 		Subscriptions []string
 		SendQueue     chan []byte
 		KeepAlive     time.Duration
+		LastWill      LastWill
 	}
 
 	clientSubscriptionMap map[string][]*Client
@@ -118,6 +129,21 @@ func connect(id string, conn net.Conn, p *packet.ConnectPacket) *Client {
 	client.KeepAlive = time.Second * time.Duration(
 		math.Round(float64(p.VariableHeader.KeepAlive.Value)*float64(1.5)))
 
+	client.LastWill.WillFlag = p.VariableHeader.WillFlag
+	if client.LastWill.WillFlag {
+		client.LastWill.Properties.DelayInterval = 
+      time.Second * time.Duration(p.Payload.WillProperties.DelayInterval.Size)
+		client.LastWill.Properties.CorrelationData = p.Payload.WillProperties.CorrelationData.Data
+		client.LastWill.Properties.ContentType = p.Payload.WillProperties.ContentType.String()
+		client.LastWill.Properties.MessageExpiryInterval = 
+      time.Second * time.Duration(p.Payload.WillProperties.MessageExpiryInterval.Value)
+		client.LastWill.Properties.ReponseTopic = p.Payload.WillProperties.ResponseTopic.String()
+		client.LastWill.Qos = p.VariableHeader.WillQos
+		client.LastWill.Payload = p.Payload.WillPayload.Data
+		client.LastWill.Topic = p.Payload.WillTopic.Str
+		client.LastWill.Retain = p.VariableHeader.WillRetain
+	}
+
 	return client
 }
 
@@ -134,7 +160,21 @@ func (client *Client) disconnect() {
 
 	clientsMutex.Lock()
 	defer clientsMutex.Unlock()
-	delete(Clients, client.ID)
+
+	if client.LastWill.WillFlag {
+    if client.LastWill.Properties.DelayInterval > 0 {
+      // TODO: Cancel delayed publish if client reconnects
+      time.AfterFunc(client.LastWill.Properties.DelayInterval, func() {
+      })
+    } else {
+      // TODO: Fill publish packet for last will
+      lastWill := packet.PublishPacket{
+      }
+      client.publish(&lastWill, client.LastWill.Topic)
+    }
+	}
+	// TODO: Delete client at some point
+	// delete(Clients, client.ID)
 }
 
 func (client *Client) unsubscribeAll() {
@@ -150,7 +190,7 @@ func (client *Client) unsubscribeTopic(topic string) {
 
 func (client *Client) onPublish(p *packet.PublishPacket) {
 	topic := p.VariableHeader.TopicName.String()
-	fmt.Println(client.ID, "published", string(p.Payload.Data), "to", topic)
+  fmt.Println(client.ID, "published", string(p.Payload.Data), "to", topic)
 
 	// MQTT-3.3.1-8: If the retained flag is not set the message should not be stored.
 	if p.FixedHeader.Retain {
@@ -170,6 +210,11 @@ func (client *Client) onPublish(p *packet.PublishPacket) {
 		}(client, bytes)
 	}
 
+  client.publish(p, topic)
+}
+
+// TODO: This should actually be a server.publish method
+func (client *Client) publish(p *packet.PublishPacket, topic string) {
 	// TODO: Make changes to received packet before forwarding.
 	// - New packet id?
 	bytes, err := p.Encode()

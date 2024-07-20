@@ -9,6 +9,16 @@ import (
 
 type (
 
+  WillProperties struct {
+    PropertiesLength types.VariableByteInteger
+    DelayInterval types.UnsignedInt
+    PayloadFormatIndicator PayloadFormatIndicator
+    MessageExpiryInterval types.UnsignedInt
+    ContentType types.UtfString
+    ResponseTopic types.UtfString
+    CorrelationData types.BinaryData
+    UserProperty types.UtfStringPair
+  }
 
 	ConnectPacket struct {
 		FixedHeader    FixedHeader
@@ -29,17 +39,7 @@ type (
     Payload struct {
       ClientId types.UtfString
 
-      WillProperties struct {
-        PropertiesLength types.VariableByteInteger
-        DelayInterval types.UnsignedInt
-        PayloadFormatIndicator PayloadFormatIndicator
-        MessageExpiryInterval types.UnsignedInt
-        ContentType types.UtfString
-        ResponseTopic types.UtfString
-        CorrelationData types.BinaryData
-        UserProperty types.UtfStringPair
-      }
-
+      WillProperties  WillProperties
       WillTopic types.UtfString
       WillPayload types.BinaryData
       UserName types.UtfString
