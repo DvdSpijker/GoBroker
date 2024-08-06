@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -30,9 +29,6 @@ func main() {
 func handleConnection(conn net.Conn) {
 	defer conn.Close()
 	defer println("----------")
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	var client *Client
 	for {
@@ -72,7 +68,7 @@ func handleConnection(conn net.Conn) {
 			fmt.Println(connectPacket.String())
 			client = connect(connectPacket.Payload.ClientId.String(), conn, &connectPacket)
 
-			go client.writer(ctx)
+			go client.writer()
 
 			conackPacket := packet.ConackPacket{}
 			conackPacket.VariableHeader.ConnectReasonCode = packet.Success

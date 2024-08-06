@@ -12,35 +12,20 @@ import (
 
 	"github.com/DvdSpijker/GoBroker/packet"
 	"github.com/DvdSpijker/GoBroker/protocol"
-	"github.com/DvdSpijker/GoBroker/types"
 )
 
 const sendQueueSize = 100
 
 type (
-	LastWill struct {
-		WillFlag   bool
-		Qos        types.QoS
-		Retain     bool
-		Topic      string
-		Payload    []byte
-		Properties struct {
-			DelayInterval         time.Duration
-			MessageExpiryInterval time.Duration
-			ContentType           string
-			ReponseTopic          string
-			CorrelationData       []byte
-			// TODO: All properties
-		}
-	}
-
 	Client struct {
-		ID            string
-		Conn          net.Conn
-		Subscriptions []string
-		SendQueue     chan []byte
-		KeepAlive     time.Duration
-		LastWill      LastWill
+		ID             string
+		Conn           net.Conn // If Conn is nil the client is offline
+		Subscriptions  []string
+		SendQueue      chan []byte
+		KeepAlive      time.Duration
+		LastWill       protocol.LastWill
+		WillDelayTimer *time.Timer
+		Ctx            context.Context
 	}
 
 	clientSubscriptionMap map[string][]*Client
@@ -115,15 +100,28 @@ func connect(id string, conn net.Conn, p *packet.ConnectPacket) *Client {
 	clientsMutex.Lock()
 	defer clientsMutex.Unlock()
 
-	_, ok := Clients[id]
+	var client *Client
+	c, ok := Clients[id]
 	if ok {
-		// TODO: Send client a disconnect message instead of panicing
-		panic("client already connected: " + id)
+		if c.Conn != nil {
+			// TODO: Send client a disconnect message instead of panicing
+			panic("client already connected: " + id)
+		}
+		fmt.Println("existing client")
+		c.Conn = conn
+		client = c
+		client.WillDelayTimer.Stop()
+	} else {
+		fmt.Println("new client")
+		client = &Client{
+			ID:   id,
+			Conn: conn,
+			Ctx:  context.Background(),
+		}
+		Clients[id] = client
 	}
 
 	fmt.Println(id, "connected")
-	client := &Client{ID: id, Conn: conn}
-	Clients[id] = client
 	client.SendQueue = make(chan []byte, 100)
 	// 3.1.2-22: The server allows 1.5x the keep-alive period between control packets.
 	client.KeepAlive = time.Second * time.Duration(
@@ -131,16 +129,16 @@ func connect(id string, conn net.Conn, p *packet.ConnectPacket) *Client {
 
 	client.LastWill.WillFlag = p.VariableHeader.WillFlag
 	if client.LastWill.WillFlag {
-		client.LastWill.Properties.DelayInterval = 
-      time.Second * time.Duration(p.Payload.WillProperties.DelayInterval.Size)
-		client.LastWill.Properties.CorrelationData = p.Payload.WillProperties.CorrelationData.Data
-		client.LastWill.Properties.ContentType = p.Payload.WillProperties.ContentType.String()
-		client.LastWill.Properties.MessageExpiryInterval = 
-      time.Second * time.Duration(p.Payload.WillProperties.MessageExpiryInterval.Value)
-		client.LastWill.Properties.ReponseTopic = p.Payload.WillProperties.ResponseTopic.String()
+		client.LastWill.Properties.DelayInterval = time.Second *
+			time.Duration(p.Payload.WillProperties.DelayInterval.Value)
+		client.LastWill.Properties.CorrelationData = p.Payload.WillProperties.CorrelationData
+		client.LastWill.Properties.ContentType = p.Payload.WillProperties.ContentType
+		client.LastWill.Properties.MessageExpiryInterval = time.Second *
+			time.Duration(p.Payload.WillProperties.MessageExpiryInterval.Value)
+		client.LastWill.Properties.ReponseTopic = p.Payload.WillProperties.ResponseTopic
 		client.LastWill.Qos = p.VariableHeader.WillQos
-		client.LastWill.Payload = p.Payload.WillPayload.Data
-		client.LastWill.Topic = p.Payload.WillTopic.Str
+		client.LastWill.Payload = p.Payload.WillPayload
+		client.LastWill.Topic = p.Payload.WillTopic
 		client.LastWill.Retain = p.VariableHeader.WillRetain
 	}
 
@@ -162,19 +160,21 @@ func (client *Client) disconnect() {
 	defer clientsMutex.Unlock()
 
 	if client.LastWill.WillFlag {
-    if client.LastWill.Properties.DelayInterval > 0 {
-      // TODO: Cancel delayed publish if client reconnects
-      time.AfterFunc(client.LastWill.Properties.DelayInterval, func() {
-      })
-    } else {
-      // TODO: Fill publish packet for last will
-      lastWill := packet.PublishPacket{
-      }
-      client.publish(&lastWill, client.LastWill.Topic)
-    }
+		lastWill := protocol.MakeLastWillPublishPacket(&client.LastWill)
+		if client.LastWill.Properties.DelayInterval > 0 {
+			client.WillDelayTimer = time.AfterFunc(client.LastWill.Properties.DelayInterval, func() {
+				fmt.Println("publishing delayed last will to", client.LastWill.Topic.String())
+				client.publish(lastWill, client.LastWill.Topic.String())
+			})
+		} else {
+			fmt.Println("publishing last will to", client.LastWill.Topic.String())
+			client.publish(lastWill, client.LastWill.Topic.String())
+		}
 	}
 	// TODO: Delete client at some point
 	// delete(Clients, client.ID)
+
+	client.Conn = nil
 }
 
 func (client *Client) unsubscribeAll() {
@@ -190,7 +190,7 @@ func (client *Client) unsubscribeTopic(topic string) {
 
 func (client *Client) onPublish(p *packet.PublishPacket) {
 	topic := p.VariableHeader.TopicName.String()
-  fmt.Println(client.ID, "published", string(p.Payload.Data), "to", topic)
+	fmt.Println(client.ID, "published", string(p.Payload.Data), "to", topic)
 
 	// MQTT-3.3.1-8: If the retained flag is not set the message should not be stored.
 	if p.FixedHeader.Retain {
@@ -210,7 +210,7 @@ func (client *Client) onPublish(p *packet.PublishPacket) {
 		}(client, bytes)
 	}
 
-  client.publish(p, topic)
+	client.publish(p, topic)
 }
 
 // TODO: This should actually be a server.publish method
@@ -324,7 +324,7 @@ func (client *Client) Write(p []byte) (n int, err error) {
 // handlers accessing the connection and scrambling packet
 // that way.
 // This way of writing also avoids the need for a lock on the connection.
-func (client *Client) writer(ctx context.Context) {
+func (client *Client) writer() {
 	for {
 		select {
 		case bytes, ok := <-client.SendQueue:
@@ -339,7 +339,7 @@ func (client *Client) writer(ctx context.Context) {
 			if n != len(bytes) {
 				fmt.Printf("%s wrote %d of %d bytes\n", client.ID, n, len(bytes))
 			}
-		case <-ctx.Done():
+		case <-client.Ctx.Done():
 			fmt.Println(client.ID, "exitting writer")
 			return
 		}

@@ -10,15 +10,13 @@ import (
 
 type (
 
-	PublishPacket struct {
-		FixedHeader struct {
+		PublishFixedHeader struct {
 			CommonFixedHeader FixedHeader
 			Dup               bool // Duplicate flag, set when client tries to re-deliver.
 			Qos               types.QoS
 			Retain            bool
 		}
-
-		VariableHeader struct {
+		PublishVariableHeader struct {
 			TopicName              types.UtfString
 			PacketIdentifier       types.UnsignedInt
       PropertyLength         types.VariableByteInteger
@@ -32,12 +30,28 @@ type (
 			SubscriptionIdentifier types.VariableByteInteger
 			ContentType            types.UtfString
 		}
-
-		Payload struct {
+		PublishPayload struct {
 			Data []byte
 		}
+	PublishPacket struct {
+		FixedHeader PublishFixedHeader
+    VariableHeader PublishVariableHeader
+    Payload PublishPayload
+
 	}
 )
+
+func PublishPacketFlags(qos types.QoS, dup bool, retain bool) PacketFlag {
+  var dupInt, qosInt, retainInt int
+  if retain {
+    retainInt = 1
+  }
+  if dup {
+    dupInt = 1
+  }
+  qosInt = int(qos)
+  return PacketFlag(dupInt << 4 | qosInt << 1 | retainInt)
+}
 
 func (packet *PublishPacket) Decode(input []byte) (int, error) {
 	totalRead := 0
