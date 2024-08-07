@@ -6,10 +6,13 @@ import (
 	"io"
 	"net"
 	"os"
+	"time"
 
 	"github.com/DvdSpijker/GoBroker/packet"
 	"github.com/DvdSpijker/GoBroker/protocol"
 )
+
+const connectTimeout = time.Second * 5
 
 func main() {
 	ln, err := net.Listen("tcp", ":8080")
@@ -34,19 +37,32 @@ func handleConnection(conn net.Conn) {
 	for {
 		println("----------")
 
+		// Use the client to control the keep-alive deadline for the connection
+		// if the client exists (which is created upon connect)
+		// Use a fixed amount of time allowed between the client opening a connection and
+		// sending a connect message if there is not client.
+		// The specification is unclear about what that amount of time should be,
+		// it specifies 'reasonable'.
 		if client != nil {
 			// Reset keep-alive after receiving a control packet.
 			client.setkeepAliveDeadline()
+		} else {
+			conn.SetReadDeadline(time.Now().Add(connectTimeout))
 		}
+
 		fixedHeader, bytes, err := readPacket(conn)
 		if errors.Is(err, io.EOF) {
 			fmt.Println("client closed connection:", client.ID)
 			client.disconnect()
 			return
 		} else if errors.Is(err, os.ErrDeadlineExceeded) {
-			fmt.Printf("no control packet received within keep-alive timeout from %s:\n",
-				client.ID)
-			client.disconnect()
+			if client != nil {
+				fmt.Printf("no control packet received within keep-alive timeout from %s:\n",
+					client.ID)
+				client.disconnect()
+			} else {
+				fmt.Println("no connect received after client opened connection")
+			}
 			return
 		}
 		if err != nil {

@@ -107,40 +107,28 @@ func connect(id string, conn net.Conn, p *packet.ConnectPacket) *Client {
 			// TODO: Send client a disconnect message instead of panicing
 			panic("client already connected: " + id)
 		}
-		fmt.Println("existing client")
 		c.Conn = conn
 		client = c
-		client.WillDelayTimer.Stop()
+		if client.WillDelayTimer != nil {
+			client.WillDelayTimer.Stop()
+		}
+		fmt.Println("existing client reconnected", id)
 	} else {
-		fmt.Println("new client")
 		client = &Client{
 			ID:   id,
 			Conn: conn,
 			Ctx:  context.Background(),
 		}
 		Clients[id] = client
+		fmt.Println("new client connected", id)
 	}
 
-	fmt.Println(id, "connected")
 	client.SendQueue = make(chan []byte, 100)
 	// 3.1.2-22: The server allows 1.5x the keep-alive period between control packets.
 	client.KeepAlive = time.Second * time.Duration(
 		math.Round(float64(p.VariableHeader.KeepAlive.Value)*float64(1.5)))
 
-	client.LastWill.WillFlag = p.VariableHeader.WillFlag
-	if client.LastWill.WillFlag {
-		client.LastWill.Properties.DelayInterval = time.Second *
-			time.Duration(p.Payload.WillProperties.DelayInterval.Value)
-		client.LastWill.Properties.CorrelationData = p.Payload.WillProperties.CorrelationData
-		client.LastWill.Properties.ContentType = p.Payload.WillProperties.ContentType
-		client.LastWill.Properties.MessageExpiryInterval = time.Second *
-			time.Duration(p.Payload.WillProperties.MessageExpiryInterval.Value)
-		client.LastWill.Properties.ReponseTopic = p.Payload.WillProperties.ResponseTopic
-		client.LastWill.Qos = p.VariableHeader.WillQos
-		client.LastWill.Payload = p.Payload.WillPayload
-		client.LastWill.Topic = p.Payload.WillTopic
-		client.LastWill.Retain = p.VariableHeader.WillRetain
-	}
+	client.LastWill = copyLastWill(p)
 
 	return client
 }
@@ -227,7 +215,7 @@ func (client *Client) publish(p *packet.PublishPacket, topic string) {
 	defer clientSubscriptionMutex.Unlock()
 
 	// Loop over client subscriptions instead of clients because
-	// it is more efficient when the largers part of the connected
+	// it is more efficient when the larger part of the connected
 	// clients have few subscriptions.
 	for t, subscription := range ClientSubscriptions {
 		if topicMatches(t, topic) {
@@ -264,7 +252,6 @@ func (client *Client) subscribe(topic string) {
 	retainedMessage := retainedMessages.getRetainedMessages(topic)
 	if retainedMessage != nil {
 		fmt.Printf("sending retained message on topic %s to %s\n", topic, client.ID)
-		// TODO: Encode packet, clear necessary flags then encode and send.
 		bytes, err := retainedMessage.Encode()
 		if err != nil {
 			fmt.Println("failed to encode publish message:", err)
@@ -344,4 +331,23 @@ func (client *Client) writer() {
 			return
 		}
 	}
+}
+
+func copyLastWill(p *packet.ConnectPacket) protocol.LastWill {
+	lastWill := protocol.LastWill{}
+	lastWill.WillFlag = p.VariableHeader.WillFlag
+	if lastWill.WillFlag {
+		lastWill.Properties.DelayInterval = time.Second *
+			time.Duration(p.Payload.WillProperties.DelayInterval.Value)
+		lastWill.Properties.CorrelationData = p.Payload.WillProperties.CorrelationData
+		lastWill.Properties.ContentType = p.Payload.WillProperties.ContentType
+		lastWill.Properties.MessageExpiryInterval = time.Second *
+			time.Duration(p.Payload.WillProperties.MessageExpiryInterval.Value)
+		lastWill.Properties.ReponseTopic = p.Payload.WillProperties.ResponseTopic
+		lastWill.Qos = p.VariableHeader.WillQos
+		lastWill.Payload = p.Payload.WillPayload
+		lastWill.Topic = p.Payload.WillTopic
+		lastWill.Retain = p.VariableHeader.WillRetain
+	}
+	return lastWill
 }
