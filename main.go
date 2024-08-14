@@ -38,11 +38,11 @@ func handleConnection(conn net.Conn) {
 		println("----------")
 
 		// Use the client to control the keep-alive deadline for the connection
-		// if the client exists (which is created upon connect)
+		// if the client exists (which is created upon connect).
 		// Use a fixed amount of time allowed between the client opening a connection and
-		// sending a connect message if there is not client.
+		// sending a connect message if there is no client.
 		// The specification is unclear about what that amount of time should be,
-		// it specifies 'reasonable'.
+		// it mentions 'reasonable'.
 		if client != nil {
 			// Reset keep-alive after receiving a control packet.
 			client.setkeepAliveDeadline()

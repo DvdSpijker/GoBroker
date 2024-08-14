@@ -17,6 +17,11 @@ import (
 const sendQueueSize = 100
 
 type (
+  SharedSubscription struct {
+    Group string
+    Topic string
+  }
+
 	Client struct {
 		ID             string
 		Conn           net.Conn // If Conn is nil the client is offline
@@ -73,6 +78,7 @@ func (retained retainedMessageMap) addRetainedMessage(topic string, p *packet.Pu
 		fmt.Println("removed retained message on topic", topic)
 	} else {
 		// MQTT-3.3.1-5: New retained message on a topic replaces old.
+		fmt.Println("added retained message on topic", topic)
 		retained[topic] = p
 	}
 }
@@ -109,6 +115,9 @@ func connect(id string, conn net.Conn, p *packet.ConnectPacket) *Client {
 		}
 		c.Conn = conn
 		client = c
+
+    // Cancel a delayed Last Will publish when the client
+    // has reconnected.
 		if client.WillDelayTimer != nil {
 			client.WillDelayTimer.Stop()
 		}
@@ -134,7 +143,7 @@ func connect(id string, conn net.Conn, p *packet.ConnectPacket) *Client {
 }
 
 func (client *Client) setkeepAliveDeadline() {
-	// 3.1.2.10: A keep-alive value of 0 has the effect of turning
+	// 3.1.2.10: A Keep-Alive value of 0 has the effect of turning
 	// of the Keep-Alive mechanism.
 	if client.KeepAlive > 0 {
 		client.Conn.SetReadDeadline(time.Now().Add(client.KeepAlive))
@@ -149,6 +158,9 @@ func (client *Client) disconnect() {
 
 	if client.LastWill.WillFlag {
 		lastWill := protocol.MakeLastWillPublishPacket(&client.LastWill)
+
+    retainedMessages.addRetainedMessage(client.LastWill.Topic.String(), lastWill)
+
 		if client.LastWill.Properties.DelayInterval > 0 {
 			client.WillDelayTimer = time.AfterFunc(client.LastWill.Properties.DelayInterval, func() {
 				fmt.Println("publishing delayed last will to", client.LastWill.Topic.String())
@@ -183,7 +195,6 @@ func (client *Client) onPublish(p *packet.PublishPacket) {
 	// MQTT-3.3.1-8: If the retained flag is not set the message should not be stored.
 	if p.FixedHeader.Retain {
 		retainedMessages.addRetainedMessage(topic, p)
-		fmt.Println(client.ID, "message retained:", retainedMessages)
 	}
 
 	if p.FixedHeader.Qos > 0 {
@@ -205,6 +216,7 @@ func (client *Client) onPublish(p *packet.PublishPacket) {
 func (client *Client) publish(p *packet.PublishPacket, topic string) {
 	// TODO: Make changes to received packet before forwarding.
 	// - New packet id?
+  // - Use subscriber's QoS instead of publisher's
 	bytes, err := p.Encode()
 	if err != nil {
 		fmt.Println("failed to encode publish packet", err)
@@ -303,14 +315,13 @@ func (client *Client) Write(p []byte) (n int, err error) {
 	return len(p), nil
 }
 
-// writer takes packets that have to be sent to this
+// writer takes packets that have to be sent by this
 // client from a queue.
-// It exits when the context is cancelled.
+// It exits when the client context is cancelled.
 //
 // Writing to a client is done like this to avoid mulitple
-// handlers accessing the connection and scrambling packet
+// handlers accessing the connection and scrambling packets
 // that way.
-// This way of writing also avoids the need for a lock on the connection.
 func (client *Client) writer() {
 	for {
 		select {
@@ -350,4 +361,19 @@ func copyLastWill(p *packet.ConnectPacket) protocol.LastWill {
 		lastWill.Retain = p.VariableHeader.WillRetain
 	}
 	return lastWill
+}
+
+func isSharedSubscription(topic string) (bool, SharedSubscription) {
+  parts := strings.SplitN(topic, "/", 2)
+
+  if len(parts) < 3 {
+    return false, SharedSubscription{}
+  } else if parts[0] != "$share" {
+    return false, SharedSubscription{}
+  }
+
+  return true, SharedSubscription{
+    Group: parts[1],
+    Topic: parts[2],
+  }
 }
