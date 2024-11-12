@@ -17,9 +17,15 @@ import (
 const sendQueueSize = 100
 
 type (
-  SharedSubscription struct {
-    Group string
+  SharedSubscriptionKey struct {
     Topic string
+    Group string
+  }
+
+  Subscription struct {
+    clients []*Client
+    publishIndex int
+    shared bool
   }
 
 	Client struct {
@@ -33,7 +39,7 @@ type (
 		Ctx            context.Context
 	}
 
-	clientSubscriptionMap map[string][]*Client
+	clientSubscriptionMap map[string]Subscription
 	retainedMessageMap    map[string]*packet.PublishPacket
 )
 
@@ -44,30 +50,66 @@ var (
 	clientSubscriptionMutex = sync.Mutex{}
 	ClientSubscriptions     = make(clientSubscriptionMap)
 
+
 	retainedMessagesMutex = sync.Mutex{}
 	retainedMessages      = make(retainedMessageMap)
 )
 
-func (subs clientSubscriptionMap) deleteSubscription(topic string, client *Client) {
+func deleteSubscription(topic string, client *Client) {
+  clientSubscriptionMutex.Lock()
+  defer clientSubscriptionMutex.Unlock()
+
+  sub := ClientSubscriptions[topic]
+
+  if len(ClientSubscriptions[topic].clients) == 1 {
+    delete(ClientSubscriptions, topic)
+  }  else {
+
+    index := slices.Index(sub.clients, client)
+    // Current publish index is about to be removed.
+    if sub.shared && sub.publishIndex == index {
+      incPublishIndex(&sub)
+    }
+    // TODO: Fix out of bounds panic if index+1 does not exist.
+    ClientSubscriptions[topic] = Subscription{
+      clients: slices.Delete(sub.clients, index, index+1),
+      publishIndex: sub.publishIndex,
+      shared: sub.shared,
+    }
+  }
+}
+
+func incPublishIndex(sharedSubscription *Subscription) Subscription {
+  sharedSubscription.publishIndex++
+  if sharedSubscription.publishIndex >= len(sharedSubscription.clients) {
+    sharedSubscription.publishIndex = 0
+  }
+  return *sharedSubscription
+}
+
+func addSubscription(topic string, client *Client) {
 	clientSubscriptionMutex.Lock()
 	defer clientSubscriptionMutex.Unlock()
 
-	index := slices.Index(subs[topic], client)
-	subs[topic] = slices.Delete(subs[topic], index, index+1)
+  sub, ok := ClientSubscriptions[topic]
+  if !ok {
+    ClientSubscriptions[topic] = Subscription{
+      clients: make([]*Client, 0, 10),
+      shared: isSharedSubscription(topic),
+    }
+    sub = ClientSubscriptions[topic]
+  }
+
+  ClientSubscriptions[topic] = Subscription{
+    clients: append(sub.clients, client),
+    publishIndex: sub.publishIndex,
+    shared: sub.shared,
+  }
+
+  fmt.Println("added subscription for", client.ID, "topic", topic, "shared", isSharedSubscription(topic))
+  fmt.Println("total subscribers for topic", topic, ":", len(ClientSubscriptions[topic].clients))
 }
 
-func (subs clientSubscriptionMap) addSubscription(topic string, client *Client) {
-	clientSubscriptionMutex.Lock()
-	defer clientSubscriptionMutex.Unlock()
-
-	if subs[topic] == nil {
-		subs[topic] = make([]*Client, 0, 1)
-	}
-
-	subs[topic] = append(subs[topic], client)
-}
-
-// TODO: Only pass packet to this function once encode works.
 func (retained retainedMessageMap) addRetainedMessage(topic string, p *packet.PublishPacket) {
 	retainedMessagesMutex.Lock()
 	defer retainedMessagesMutex.Unlock()
@@ -185,7 +227,7 @@ func (client *Client) unsubscribeAll() {
 }
 
 func (client *Client) unsubscribeTopic(topic string) {
-	ClientSubscriptions.deleteSubscription(topic, client)
+	deleteSubscription(topic, client)
 }
 
 func (client *Client) onPublish(p *packet.PublishPacket) {
@@ -214,35 +256,45 @@ func (client *Client) onPublish(p *packet.PublishPacket) {
 
 // TODO: This should actually be a server.publish method
 func (client *Client) publish(p *packet.PublishPacket, topic string) {
-	// TODO: Make changes to received packet before forwarding.
-	// - New packet id?
-  // - Use subscriber's QoS instead of publisher's
-	bytes, err := p.Encode()
-	if err != nil {
-		fmt.Println("failed to encode publish packet", err)
-		return
-	}
 
 	clientSubscriptionMutex.Lock()
 	defer clientSubscriptionMutex.Unlock()
+
+  pub := func (c *Client, bytes []byte) {
+    fmt.Println(client.ID, "sends to", c.ID, "on topic", topic)
+    _, err := c.Write(
+      bytes,
+      )
+    if err != nil {
+      fmt.Println("failed to send publish to", c.ID, err)
+    }
+  }
+
+  // TODO: Make changes to received packet before forwarding.
+  // - New packet id?
+  // - Use subscriber's QoS instead of publisher's
+  bytes, err := p.Encode()
+  if err != nil {
+    fmt.Println("failed to encode publish packet", err)
+    return
+  }
 
 	// Loop over client subscriptions instead of clients because
 	// it is more efficient when the larger part of the connected
 	// clients have few subscriptions.
 	for t, subscription := range ClientSubscriptions {
 		if topicMatches(t, topic) {
-			for _, c := range subscription {
-				go func(c *Client) { // Use a goroutine here to avoid blocking by a single client.
-					fmt.Println(client.ID, "sends to", c.ID, "on topic", topic)
-					_, err := c.Write(
-						bytes,
-					)
-					if err != nil {
-						fmt.Println("failed to send publish to", c.ID, err)
-					}
-				}(c)
-			}
-		}
+      if subscription.shared {
+        ClientSubscriptions[t] = incPublishIndex(&subscription) // Pre-increment to avoid out of bounds issues.
+        fmt.Println("shared subscription:", topic, " publish index:", subscription.publishIndex)
+        c := subscription.clients[subscription.publishIndex]
+        go pub(c, bytes)
+      } else {
+        for _, c := range subscription.clients {
+          go pub(c, bytes)
+        }
+      }
+    }
 	}
 }
 
@@ -271,7 +323,7 @@ func (client *Client) subscribe(topic string) {
 		client.Conn.Write(bytes)
 	}
 
-	ClientSubscriptions.addSubscription(topic, client)
+	addSubscription(topic, client)
 }
 
 // TODO: not very efficient probably
@@ -281,6 +333,9 @@ func topicMatches(filter, name string) bool {
 	}
 
 	filterParts := strings.Split(filter, "/")
+  if filterParts[0] == "$share" && len(filterParts) > 3{
+    filterParts = filterParts[2:]
+  }
 	nameParts := strings.Split(name, "/")
 
 	for i := range filterParts {
@@ -363,17 +418,14 @@ func copyLastWill(p *packet.ConnectPacket) protocol.LastWill {
 	return lastWill
 }
 
-func isSharedSubscription(topic string) (bool, SharedSubscription) {
-  parts := strings.SplitN(topic, "/", 2)
+func isSharedSubscription(topic string) bool {
+  parts := strings.Split(topic, "/")
 
   if len(parts) < 3 {
-    return false, SharedSubscription{}
+    return false
   } else if parts[0] != "$share" {
-    return false, SharedSubscription{}
+    return false
   }
 
-  return true, SharedSubscription{
-    Group: parts[1],
-    Topic: parts[2],
-  }
+  return true
 }

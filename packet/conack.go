@@ -58,8 +58,17 @@ func (hdr ConackVariableHeader) Encode() (bin []byte, err error) {
 	// }
 	bin = append(bin, hdr.ConnectAcknowledgeFlags)
 	bin = append(bin, byte(hdr.ConnectReasonCode))
-	// Property length of zero,
-	// because there are no properties
-	bin = append(bin, 0)
+
+  propertiesLength := types.VariableByteInteger{Value: 2}
+  properties := []byte{byte(SharedSubscriptionAvailable), 0x01}
+
+  b, err := propertiesLength.Encode()
+  if err != nil {
+    return nil, err
+  }
+
+	bin = append(bin, b...)
+  bin = append(bin, properties...)
+
 	return bin, nil
 }

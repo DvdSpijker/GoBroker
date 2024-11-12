@@ -57,6 +57,8 @@ func (packet *SubscribePacket) Decode(input []byte) (int, error) {
 
   packet.Payload.Filters = tpfs
 
+  fmt.Printf("subscribe packet topic filter: %v\n", tpfs)
+
   return 0, nil
 }
 

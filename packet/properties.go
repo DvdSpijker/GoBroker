@@ -19,4 +19,5 @@ const (
   ResponseTopicProperty PropertyIdentifier = 0x08
   CorrelationDataProperty PropertyIdentifier = 0x09
   UserPropertyProperty PropertyIdentifier = 0x26
+  SharedSubscriptionAvailable PropertyIdentifier = 0x2A
 )
