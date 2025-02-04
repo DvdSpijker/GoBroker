@@ -106,7 +106,7 @@ func addSubscription(topic string, client *Client) {
     shared: sub.shared,
   }
 
-  fmt.Println("added subscription for", client.ID, "topic", topic, "shared", isSharedSubscription(topic))
+  fmt.Println("added subscription for:", client.ID, "topic:", topic, "shared:", isSharedSubscription(topic))
   fmt.Println("total subscribers for topic", topic, ":", len(ClientSubscriptions[topic].clients))
 }
 
@@ -313,15 +313,18 @@ func (client *Client) subscribe(topic string) {
 
 	client.Subscriptions = append(client.Subscriptions, topic)
 
-	retainedMessage := retainedMessages.getRetainedMessages(topic)
-	if retainedMessage != nil {
-		fmt.Printf("sending retained message on topic %s to %s\n", topic, client.ID)
-		bytes, err := retainedMessage.Encode()
-		if err != nil {
-			fmt.Println("failed to encode publish message:", err)
-		}
-		client.Conn.Write(bytes)
-	}
+  // New subscribers to a shared subscription do not received rainted messages.
+  if !isSharedSubscription(topic) {
+    retainedMessage := retainedMessages.getRetainedMessages(topic)
+    if retainedMessage != nil {
+      fmt.Printf("sending retained message on topic %s to %s\n", topic, client.ID)
+      bytes, err := retainedMessage.Encode()
+      if err != nil {
+        fmt.Println("failed to encode publish message:", err)
+      }
+      client.Conn.Write(bytes)
+    }
+  }
 
 	addSubscription(topic, client)
 }

@@ -15,7 +15,7 @@ import (
 const connectTimeout = time.Second * 5
 
 func main() {
-	ln, err := net.Listen("tcp", ":8080")
+	ln, err := net.Listen("tcp", ":8888")
 	if err != nil {
 		panic(err)
 	}
@@ -213,5 +213,7 @@ func readPacket(conn net.Conn) (packet.FixedHeader, []byte, error) {
 		)
 	}
 
-	return fixedHeader, append(headerBytes, packetBytes...), nil
+  readBytes := append(headerBytes, packetBytes...)
+  fmt.Printf("read bytes: %x\n", readBytes)
+	return fixedHeader, readBytes, nil
 }
