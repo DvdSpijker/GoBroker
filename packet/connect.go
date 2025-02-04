@@ -148,9 +148,10 @@ func (packet *ConnectPacket) Decode(input []byte) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-
-	totalRead += n
-	input = input[n+int(packet.VariableHeader.PropertyLength.Value):]
+	if packet.VariableHeader.PropertyLength.Value > 0 {
+		totalRead += n
+		input = input[n+int(packet.VariableHeader.PropertyLength.Value):]
+	}
 
 	n, err = packet.Payload.ClientId.Decode(input)
 	if err != nil {

@@ -67,7 +67,8 @@ func handleConnection(conn net.Conn) {
 		}
 		if err != nil {
 			fmt.Println("packet read error", err)
-			panic("whoop whoop")
+			client.disconnect()
+			return
 		}
 
 		switch fixedHeader.PacketType {
@@ -213,7 +214,7 @@ func readPacket(conn net.Conn) (packet.FixedHeader, []byte, error) {
 		)
 	}
 
-  readBytes := append(headerBytes, packetBytes...)
-  fmt.Printf("read bytes: %x\n", readBytes)
+	readBytes := append(headerBytes, packetBytes...)
+	fmt.Printf("read bytes: %x\n", readBytes)
 	return fixedHeader, readBytes, nil
 }

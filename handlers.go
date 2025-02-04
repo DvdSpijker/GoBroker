@@ -17,16 +17,16 @@ import (
 const sendQueueSize = 100
 
 type (
-  SharedSubscriptionKey struct {
-    Topic string
-    Group string
-  }
+	SharedSubscriptionKey struct {
+		Topic string
+		Group string
+	}
 
-  Subscription struct {
-    clients []*Client
-    publishIndex int
-    shared bool
-  }
+	Subscription struct {
+		clients      []*Client
+		publishIndex int
+		shared       bool
+	}
 
 	Client struct {
 		ID             string
@@ -37,6 +37,7 @@ type (
 		LastWill       protocol.LastWill
 		WillDelayTimer *time.Timer
 		Ctx            context.Context
+		Cancel         context.CancelFunc
 	}
 
 	clientSubscriptionMap map[string]Subscription
@@ -50,64 +51,63 @@ var (
 	clientSubscriptionMutex = sync.Mutex{}
 	ClientSubscriptions     = make(clientSubscriptionMap)
 
-
 	retainedMessagesMutex = sync.Mutex{}
 	retainedMessages      = make(retainedMessageMap)
 )
 
 func deleteSubscription(topic string, client *Client) {
-  clientSubscriptionMutex.Lock()
-  defer clientSubscriptionMutex.Unlock()
+	clientSubscriptionMutex.Lock()
+	defer clientSubscriptionMutex.Unlock()
 
-  sub := ClientSubscriptions[topic]
+	sub := ClientSubscriptions[topic]
 
-  if len(ClientSubscriptions[topic].clients) == 1 {
-    delete(ClientSubscriptions, topic)
-  }  else {
+	if len(ClientSubscriptions[topic].clients) == 1 {
+		delete(ClientSubscriptions, topic)
+	} else {
 
-    index := slices.Index(sub.clients, client)
-    // Current publish index is about to be removed.
-    if sub.shared && sub.publishIndex == index {
-      incPublishIndex(&sub)
-    }
-    // TODO: Fix out of bounds panic if index+1 does not exist.
-    ClientSubscriptions[topic] = Subscription{
-      clients: slices.Delete(sub.clients, index, index+1),
-      publishIndex: sub.publishIndex,
-      shared: sub.shared,
-    }
-  }
+		index := slices.Index(sub.clients, client)
+		// Current publish index is about to be removed.
+		if sub.shared && sub.publishIndex == index {
+			incPublishIndex(&sub)
+		}
+		// TODO: Fix out of bounds panic if index+1 does not exist.
+		ClientSubscriptions[topic] = Subscription{
+			clients:      slices.Delete(sub.clients, index, index+1),
+			publishIndex: sub.publishIndex,
+			shared:       sub.shared,
+		}
+	}
 }
 
 func incPublishIndex(sharedSubscription *Subscription) Subscription {
-  sharedSubscription.publishIndex++
-  if sharedSubscription.publishIndex >= len(sharedSubscription.clients) {
-    sharedSubscription.publishIndex = 0
-  }
-  return *sharedSubscription
+	sharedSubscription.publishIndex++
+	if sharedSubscription.publishIndex >= len(sharedSubscription.clients) {
+		sharedSubscription.publishIndex = 0
+	}
+	return *sharedSubscription
 }
 
 func addSubscription(topic string, client *Client) {
 	clientSubscriptionMutex.Lock()
 	defer clientSubscriptionMutex.Unlock()
 
-  sub, ok := ClientSubscriptions[topic]
-  if !ok {
-    ClientSubscriptions[topic] = Subscription{
-      clients: make([]*Client, 0, 10),
-      shared: isSharedSubscription(topic),
-    }
-    sub = ClientSubscriptions[topic]
-  }
+	sub, ok := ClientSubscriptions[topic]
+	if !ok {
+		ClientSubscriptions[topic] = Subscription{
+			clients: make([]*Client, 0, 10),
+			shared:  isSharedSubscription(topic),
+		}
+		sub = ClientSubscriptions[topic]
+	}
 
-  ClientSubscriptions[topic] = Subscription{
-    clients: append(sub.clients, client),
-    publishIndex: sub.publishIndex,
-    shared: sub.shared,
-  }
+	ClientSubscriptions[topic] = Subscription{
+		clients:      append(sub.clients, client),
+		publishIndex: sub.publishIndex,
+		shared:       sub.shared,
+	}
 
-  fmt.Println("added subscription for:", client.ID, "topic:", topic, "shared:", isSharedSubscription(topic))
-  fmt.Println("total subscribers for topic", topic, ":", len(ClientSubscriptions[topic].clients))
+	fmt.Println("added subscription for:", client.ID, "topic:", topic, "shared:", isSharedSubscription(topic))
+	fmt.Println("total subscribers for topic", topic, ":", len(ClientSubscriptions[topic].clients))
 }
 
 func (retained retainedMessageMap) addRetainedMessage(topic string, p *packet.PublishPacket) {
@@ -158,17 +158,20 @@ func connect(id string, conn net.Conn, p *packet.ConnectPacket) *Client {
 		c.Conn = conn
 		client = c
 
-    // Cancel a delayed Last Will publish when the client
-    // has reconnected.
+		// Cancel a delayed Last Will publish when the client
+		// has reconnected.
 		if client.WillDelayTimer != nil {
 			client.WillDelayTimer.Stop()
 		}
 		fmt.Println("existing client reconnected", id)
 	} else {
+
+		ctx, cancel := context.WithCancel(context.Background())
 		client = &Client{
-			ID:   id,
-			Conn: conn,
-			Ctx:  context.Background(),
+			ID:     id,
+			Conn:   conn,
+			Ctx:    ctx,
+			Cancel: cancel,
 		}
 		Clients[id] = client
 		fmt.Println("new client connected", id)
@@ -201,7 +204,7 @@ func (client *Client) disconnect() {
 	if client.LastWill.WillFlag {
 		lastWill := protocol.MakeLastWillPublishPacket(&client.LastWill)
 
-    retainedMessages.addRetainedMessage(client.LastWill.Topic.String(), lastWill)
+		retainedMessages.addRetainedMessage(client.LastWill.Topic.String(), lastWill)
 
 		if client.LastWill.Properties.DelayInterval > 0 {
 			client.WillDelayTimer = time.AfterFunc(client.LastWill.Properties.DelayInterval, func() {
@@ -216,6 +219,7 @@ func (client *Client) disconnect() {
 	// TODO: Delete client at some point
 	// delete(Clients, client.ID)
 
+	client.Cancel()
 	client.Conn = nil
 }
 
@@ -256,45 +260,44 @@ func (client *Client) onPublish(p *packet.PublishPacket) {
 
 // TODO: This should actually be a server.publish method
 func (client *Client) publish(p *packet.PublishPacket, topic string) {
-
 	clientSubscriptionMutex.Lock()
 	defer clientSubscriptionMutex.Unlock()
 
-  pub := func (c *Client, bytes []byte) {
-    fmt.Println(client.ID, "sends to", c.ID, "on topic", topic)
-    _, err := c.Write(
-      bytes,
-      )
-    if err != nil {
-      fmt.Println("failed to send publish to", c.ID, err)
-    }
-  }
+	pub := func(c *Client, bytes []byte) {
+		fmt.Println(client.ID, "sends to", c.ID, "on topic", topic)
+		_, err := c.Write(
+			bytes,
+		)
+		if err != nil {
+			fmt.Println("failed to send publish to", c.ID, err)
+		}
+	}
 
-  // TODO: Make changes to received packet before forwarding.
-  // - New packet id?
-  // - Use subscriber's QoS instead of publisher's
-  bytes, err := p.Encode()
-  if err != nil {
-    fmt.Println("failed to encode publish packet", err)
-    return
-  }
+	// TODO: Make changes to received packet before forwarding.
+	// - New packet id?
+	// - Use subscriber's QoS instead of publisher's
+	bytes, err := p.Encode()
+	if err != nil {
+		fmt.Println("failed to encode publish packet", err)
+		return
+	}
 
 	// Loop over client subscriptions instead of clients because
 	// it is more efficient when the larger part of the connected
 	// clients have few subscriptions.
 	for t, subscription := range ClientSubscriptions {
 		if topicMatches(t, topic) {
-      if subscription.shared {
-        ClientSubscriptions[t] = incPublishIndex(&subscription) // Pre-increment to avoid out of bounds issues.
-        fmt.Println("shared subscription:", topic, " publish index:", subscription.publishIndex)
-        c := subscription.clients[subscription.publishIndex]
-        go pub(c, bytes)
-      } else {
-        for _, c := range subscription.clients {
-          go pub(c, bytes)
-        }
-      }
-    }
+			if subscription.shared {
+				ClientSubscriptions[t] = incPublishIndex(&subscription) // Pre-increment to avoid out of bounds issues.
+				fmt.Println("shared subscription:", topic, " publish index:", subscription.publishIndex)
+				c := subscription.clients[subscription.publishIndex]
+				go pub(c, bytes)
+			} else {
+				for _, c := range subscription.clients {
+					go pub(c, bytes)
+				}
+			}
+		}
 	}
 }
 
@@ -313,18 +316,18 @@ func (client *Client) subscribe(topic string) {
 
 	client.Subscriptions = append(client.Subscriptions, topic)
 
-  // New subscribers to a shared subscription do not received rainted messages.
-  if !isSharedSubscription(topic) {
-    retainedMessage := retainedMessages.getRetainedMessages(topic)
-    if retainedMessage != nil {
-      fmt.Printf("sending retained message on topic %s to %s\n", topic, client.ID)
-      bytes, err := retainedMessage.Encode()
-      if err != nil {
-        fmt.Println("failed to encode publish message:", err)
-      }
-      client.Conn.Write(bytes)
-    }
-  }
+	// New subscribers to a shared subscription do not received rainted messages.
+	if !isSharedSubscription(topic) {
+		retainedMessage := retainedMessages.getRetainedMessages(topic)
+		if retainedMessage != nil {
+			fmt.Printf("sending retained message on topic %s to %s\n", topic, client.ID)
+			bytes, err := retainedMessage.Encode()
+			if err != nil {
+				fmt.Println("failed to encode publish message:", err)
+			}
+			client.Conn.Write(bytes)
+		}
+	}
 
 	addSubscription(topic, client)
 }
@@ -336,9 +339,9 @@ func topicMatches(filter, name string) bool {
 	}
 
 	filterParts := strings.Split(filter, "/")
-  if filterParts[0] == "$share" && len(filterParts) > 3{
-    filterParts = filterParts[2:]
-  }
+	if filterParts[0] == "$share" && len(filterParts) > 3 {
+		filterParts = filterParts[2:]
+	}
 	nameParts := strings.Split(name, "/")
 
 	for i := range filterParts {
@@ -388,6 +391,9 @@ func (client *Client) writer() {
 				fmt.Println(client.ID, "send queue closed")
 				return
 			}
+			if client.Conn == nil {
+				break
+			}
 			n, err := client.Conn.Write(bytes)
 			if err != nil {
 				fmt.Println(client.ID, "write error", err)
@@ -396,7 +402,7 @@ func (client *Client) writer() {
 				fmt.Printf("%s wrote %d of %d bytes\n", client.ID, n, len(bytes))
 			}
 		case <-client.Ctx.Done():
-			fmt.Println(client.ID, "exitting writer")
+			fmt.Println("exitting writer:", client.ID)
 			return
 		}
 	}
@@ -422,13 +428,13 @@ func copyLastWill(p *packet.ConnectPacket) protocol.LastWill {
 }
 
 func isSharedSubscription(topic string) bool {
-  parts := strings.Split(topic, "/")
+	parts := strings.Split(topic, "/")
 
-  if len(parts) < 3 {
-    return false
-  } else if parts[0] != "$share" {
-    return false
-  }
+	if len(parts) < 3 {
+		return false
+	} else if parts[0] != "$share" {
+		return false
+	}
 
-  return true
+	return true
 }

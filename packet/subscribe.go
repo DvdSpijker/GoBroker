@@ -48,7 +48,9 @@ func (packet *SubscribePacket) Decode(input []byte) (int, error) {
 	n, err = packet.VariableHeader.PropertyLength.Decode(input)
 	// TODO: Parse properties
 	fmt.Printf("property length: %d\n", packet.VariableHeader.PropertyLength.Value)
-	input = input[n+int(packet.VariableHeader.PropertyLength.Value):]
+	if packet.VariableHeader.PropertyLength.Value > 0 {
+		input = input[n+int(packet.VariableHeader.PropertyLength.Value):]
+	}
 
 	fmt.Printf("input: %x\n", input)
 	tpfs, n, err := parseSubscribePayload(input)
