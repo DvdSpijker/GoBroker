@@ -170,6 +170,9 @@ func handleConnection(conn net.Conn) {
 			}
 			_ = n
 			println("pingresp")
+
+		case packet.UNSUBSCRIBE:
+			println("cannot process unsub")
 		default:
 			panic("unknown")
 		}

@@ -89,12 +89,15 @@ func (header *SubackVariableHeader) Encode() ([]byte, error) {
 	bytes = append(bytes, b...)
 
 	header.PropertyLength.Value = 0 // TODO: Allow properties to be set.
-	b, err = header.PropertyLength.Encode()
-	if err != nil {
-		return nil, err
+	if header.PropertyLength.Value > 0 {
+		b, err = header.PropertyLength.Encode()
+		if err != nil {
+			return nil, err
+		}
+		bytes = append(bytes, b...)
 	}
 
-	return append(bytes, b...), nil
+	return bytes, nil
 }
 
 func (header *SubackVariableHeader) String() string {
