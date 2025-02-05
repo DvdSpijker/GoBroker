@@ -70,9 +70,15 @@ func deleteSubscription(topic string, client *Client) {
 		if sub.shared && sub.publishIndex == index {
 			incPublishIndex(&sub)
 		}
-		// TODO: Fix out of bounds panic if index+1 does not exist.
+
+		var clients []*Client
+		if index+1 >= len(sub.clients)-1 {
+			clients = make([]*Client, 0)
+		} else {
+			clients = slices.Delete(sub.clients, index, index+1)
+		}
 		ClientSubscriptions[topic] = Subscription{
-			clients:      slices.Delete(sub.clients, index, index+1),
+			clients:      clients,
 			publishIndex: sub.publishIndex,
 			shared:       sub.shared,
 		}
@@ -180,7 +186,7 @@ func connect(id string, conn net.Conn, p *packet.ConnectPacket) *Client {
 	client.SendQueue = make(chan []byte, 100)
 	// 3.1.2-22: The server allows 1.5x the keep-alive period between control packets.
 	client.KeepAlive = time.Second * time.Duration(
-		math.Round(float64(p.VariableHeader.KeepAlive.Value)*float64(1.5)))
+		math.Round(float64(p.VariableHeader.KeepAlive.Value)*float64(1.7)))
 
 	client.LastWill = copyLastWill(p)
 

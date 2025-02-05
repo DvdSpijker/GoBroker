@@ -57,7 +57,7 @@ func handleConnection(conn net.Conn) {
 			return
 		} else if errors.Is(err, os.ErrDeadlineExceeded) {
 			if client != nil {
-				fmt.Printf("no control packet received within keep-alive timeout from %s:\n",
+				fmt.Printf("no control packet received within keep-alive timeout from %s\n",
 					client.ID)
 				client.disconnect()
 			} else {
@@ -154,7 +154,7 @@ func handleConnection(conn net.Conn) {
 			fmt.Println("suback")
 
 		case packet.PINGREQ:
-			println("pingreq")
+			println("pingreq", client.ID)
 
 			pingRespPacket := packet.PingRespPacket{}
 			bin, err := pingRespPacket.Encode()
