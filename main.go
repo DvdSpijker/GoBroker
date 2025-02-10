@@ -5,28 +5,47 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"time"
 
 	"github.com/DvdSpijker/GoBroker/packet"
 	"github.com/DvdSpijker/GoBroker/protocol"
+	"github.com/gorilla/websocket"
 )
 
 const connectTimeout = time.Second * 5
+
+var upgrader = websocket.Upgrader{
+	ReadBufferSize:    4096,
+	WriteBufferSize:   4096,
+	EnableCompression: true,
+	CheckOrigin: func(r *http.Request) bool {
+		return true
+	},
+}
 
 func main() {
 	ln, err := net.Listen("tcp", ":8888")
 	if err != nil {
 		panic(err)
 	}
-	for {
-		conn, err := ln.Accept()
-		if err != nil {
-			panic(err)
+
+	// Listen for TCP connections
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				panic(err)
+			}
+			fmt.Println("new connection")
+			go handleConnection(conn)
 		}
-		fmt.Println("new connection")
-		go handleConnection(conn)
-	}
+	}()
+
+	// Listen for WebSocket connections
+	http.HandleFunc("/ws", websocketUpgrade)
+	http.ListenAndServe(":8887", nil)
 }
 
 func handleConnection(conn net.Conn) {
@@ -220,4 +239,13 @@ func readPacket(conn net.Conn) (packet.FixedHeader, []byte, error) {
 	readBytes := append(headerBytes, packetBytes...)
 	fmt.Printf("read bytes: %x\n", readBytes)
 	return fixedHeader, readBytes, nil
+}
+
+func websocketUpgrade(w http.ResponseWriter, r *http.Request) {
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		fmt.Println("Upgrade:", err)
+		return
+	}
+	go handleConnection(conn)
 }

@@ -185,6 +185,8 @@ func connect(id string, conn net.Conn, p *packet.ConnectPacket) *Client {
 
 	client.SendQueue = make(chan []byte, 100)
 	// 3.1.2-22: The server allows 1.5x the keep-alive period between control packets.
+	// A factor of 1.5 resulted in connections being lost due to 'missed' keep-alive packets.
+	// Changing the factor to 1.7 resulted in stable connections.
 	client.KeepAlive = time.Second * time.Duration(
 		math.Round(float64(p.VariableHeader.KeepAlive.Value)*float64(1.7)))
 
