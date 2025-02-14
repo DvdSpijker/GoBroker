@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -11,19 +12,10 @@ import (
 
 	"github.com/DvdSpijker/GoBroker/packet"
 	"github.com/DvdSpijker/GoBroker/protocol"
-	"github.com/gorilla/websocket"
+	"github.com/coder/websocket"
 )
 
 const connectTimeout = time.Second * 5
-
-var upgrader = websocket.Upgrader{
-	ReadBufferSize:    4096,
-	WriteBufferSize:   4096,
-	EnableCompression: true,
-	CheckOrigin: func(r *http.Request) bool {
-		return true
-	},
-}
 
 func main() {
 	ln, err := net.Listen("tcp", ":8888")
@@ -44,7 +36,7 @@ func main() {
 	}()
 
 	// Listen for WebSocket connections
-	http.HandleFunc("/ws", websocketUpgrade)
+	http.HandleFunc("/mqtt", websocketUpgrade)
 	http.ListenAndServe(":8887", nil)
 }
 
@@ -70,9 +62,12 @@ func handleConnection(conn net.Conn) {
 		}
 
 		fixedHeader, bytes, err := readPacket(conn)
+		fmt.Println("readPacket", err)
 		if errors.Is(err, io.EOF) {
-			fmt.Println("client closed connection:", client.ID)
-			client.disconnect()
+			if client != nil {
+				fmt.Println("client closed connection:", client.ID)
+				client.disconnect()
+			}
 			return
 		} else if errors.Is(err, os.ErrDeadlineExceeded) {
 			if client != nil {
@@ -86,7 +81,9 @@ func handleConnection(conn net.Conn) {
 		}
 		if err != nil {
 			fmt.Println("packet read error", err)
-			client.disconnect()
+			if client != nil {
+				client.disconnect()
+			}
 			return
 		}
 
@@ -242,10 +239,11 @@ func readPacket(conn net.Conn) (packet.FixedHeader, []byte, error) {
 }
 
 func websocketUpgrade(w http.ResponseWriter, r *http.Request) {
-	conn, err := upgrader.Upgrade(w, r, nil)
+	conn, err := websocket.Accept(w, r, nil)
 	if err != nil {
-		fmt.Println("Upgrade:", err)
+		fmt.Println("upgrade error:", err)
 		return
 	}
-	go handleConnection(conn)
+	fmt.Println("upgrade to WebSocket")
+	handleConnection(websocket.NetConn(context.Background(), conn, websocket.MessageBinary))
 }
