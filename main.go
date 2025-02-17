@@ -62,7 +62,7 @@ func handleConnection(conn net.Conn) {
 		}
 
 		fixedHeader, bytes, err := readPacket(conn)
-		fmt.Println("readPacket", err)
+		fmt.Println("readPacket error", err)
 		if errors.Is(err, io.EOF) {
 			if client != nil {
 				fmt.Println("client closed connection:", client.ID)
