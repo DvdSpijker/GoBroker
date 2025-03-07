@@ -188,7 +188,18 @@ func handleConnection(conn net.Conn) {
 			println("pingresp")
 
 		case packet.UNSUBSCRIBE:
-			println("cannot process unsub")
+			unsubscribePacket := packet.UnsubscribePacket{}
+			n, err := unsubscribePacket.Decode(bytes)
+			if err != nil {
+				fmt.Println("invalid unsubscribe packet:", err)
+				panic(err)
+			}
+			// TODO: Unsubscribe to all topics in Filters
+			client.unsubscribe(unsubscribePacket.Payload.Filters[0].TopicFilter.String())
+			_ = n
+
+			// TODO: Unsub ack
+			println("unsub")
 		default:
 			panic("unknown")
 		}

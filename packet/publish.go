@@ -86,21 +86,18 @@ func (packet *PublishPacket) Decode(input []byte) (int, error) {
 		totalRead += n
 	}
 
-	if len(input) > 1 {
-		n, err = packet.VariableHeader.PropertyLength.Decode(input)
-		if err != nil {
-			fmt.Println("failed to decode property length")
-			return 0, err
-		}
+	n, err = packet.VariableHeader.PropertyLength.Decode(input)
+	if err != nil {
+		fmt.Println("failed to decode property length")
+		return 0, err
+	}
 
-		n = int(packet.VariableHeader.PropertyLength.Value)
-		if n > 0 {
-			input = input[n:]
-
-			packet.VariableHeader.PropertiesRaw = input[:n]                  // TODO: Actually parse properties
-			totalRead += n + int(packet.VariableHeader.PropertyLength.Value) // Pretend properties have been read
-			input = input[n:]
-		}
+	n = int(packet.VariableHeader.PropertyLength.Value)
+	input = input[n:]
+	if packet.VariableHeader.PropertyLength.Value > 0 {
+		packet.VariableHeader.PropertiesRaw = input[:n]                  // TODO: Actually parse properties
+		totalRead += n + int(packet.VariableHeader.PropertyLength.Value) // Pretend properties have been read
+		input = input[n:]
 	}
 
 	packet.Payload.Data = input

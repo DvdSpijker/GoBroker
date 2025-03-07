@@ -29,6 +29,8 @@ type (
 	}
 
 	Client struct {
+		Mutex sync.Mutex
+
 		ID             string
 		Conn           net.Conn // If Conn is nil the client is offline
 		Subscriptions  []string
@@ -319,8 +321,8 @@ func (client *Client) puback(p *packet.PubackPacket) {
 func (client *Client) subscribe(topic string) {
 	fmt.Println(client.ID, "subbed to", topic)
 
-	clientsMutex.Lock()
-	defer clientsMutex.Unlock()
+	client.Mutex.Lock()
+	defer client.Mutex.Unlock()
 
 	client.Subscriptions = append(client.Subscriptions, topic)
 
@@ -338,6 +340,27 @@ func (client *Client) subscribe(topic string) {
 	}
 
 	addSubscription(topic, client)
+	fmt.Println(client.ID, "subbed to", topic)
+}
+
+func (client *Client) unsubscribe(topic string) {
+	client.Mutex.Lock()
+	defer client.Mutex.Unlock()
+
+	fmt.Println("subscriptions", client.Subscriptions)
+	i := slices.Index(client.Subscriptions, topic)
+	if i == -1 {
+		fmt.Println("client has no subscription:", topic)
+		return
+	}
+
+	if len(client.Subscriptions) == 1 {
+		client.Subscriptions = []string{}
+	} else {
+		slices.Delete(client.Subscriptions, i, i)
+	}
+	deleteSubscription(topic, client)
+	fmt.Println(client.ID, "unsubbed from", topic)
 }
 
 // TODO: not very efficient probably
