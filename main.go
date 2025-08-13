@@ -46,7 +46,7 @@ func main() {
 }
 
 func websocketUpgrade(w http.ResponseWriter, r *http.Request) {
-	conn, err := upgrader.Upgrade(w, r, nil)
+	conn, err := upgrader.Upgrade(w, r, http.Header{"Sec-Websocket-Protocol": []string{"mqtt"}})
 	if err != nil {
 		log.Println(err)
 		return
