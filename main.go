@@ -1,10 +1,10 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -12,10 +12,15 @@ import (
 
 	"github.com/DvdSpijker/GoBroker/packet"
 	"github.com/DvdSpijker/GoBroker/protocol"
-	"github.com/coder/websocket"
+	"github.com/gorilla/websocket"
 )
 
 const connectTimeout = time.Second * 5
+
+var upgrader = websocket.Upgrader{
+	ReadBufferSize:  1024,
+	WriteBufferSize: 1024,
+}
 
 func main() {
 	ln, err := net.Listen("tcp", ":8888")
@@ -37,7 +42,60 @@ func main() {
 
 	// Listen for WebSocket connections
 	http.HandleFunc("/mqtt", websocketUpgrade)
-	http.ListenAndServe(":8887", nil)
+	http.ListenAndServe(":9001", nil)
+}
+
+type websocketConnWrapper struct {
+	websocketConn *websocket.Conn
+}
+
+func (wrapper *websocketConnWrapper) Close() error {
+	return wrapper.websocketConn.Close()
+}
+
+func (wrapper *websocketConnWrapper) Read(b []byte) (n int, err error) {
+	_, reader, err := wrapper.websocketConn.NextReader()
+	if err != nil {
+		return 0, err
+	}
+	if reader == nil {
+		return 0, fmt.Errorf("failed to get reader")
+	}
+	return reader.Read(b)
+}
+
+func (wrapper *websocketConnWrapper) Write(b []byte) (n int, err error) {
+	writer, err := wrapper.websocketConn.NextWriter(websocket.BinaryMessage)
+	return writer.Write(b)
+}
+
+func (wrapper *websocketConnWrapper) LocalAddr() net.Addr {
+	return wrapper.websocketConn.LocalAddr()
+}
+
+func (wrapper *websocketConnWrapper) RemoteAddr() net.Addr {
+	return wrapper.websocketConn.RemoteAddr()
+}
+
+func (wrapper *websocketConnWrapper) SetDeadline(t time.Time) error {
+	return wrapper.websocketConn.NetConn().SetDeadline(t)
+}
+func (wrapper *websocketConnWrapper) SetReadDeadline(t time.Time) error {
+	return wrapper.websocketConn.SetReadDeadline(t)
+}
+func (wrapper *websocketConnWrapper) SetWriteDeadline(t time.Time) error {
+	return wrapper.websocketConn.SetWriteDeadline(t)
+}
+
+func websocketUpgrade(w http.ResponseWriter, r *http.Request) {
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	log.Println("upgrade to WebSocket")
+
+	handleConnection(&websocketConnWrapper{websocketConn: conn})
 }
 
 func handleConnection(conn net.Conn) {
@@ -211,7 +269,7 @@ func readPacket(conn net.Conn) (packet.FixedHeader, []byte, error) {
 	const fixedHeaderMaxLength = 5
 	headerBytes := make([]byte, fixedHeaderMaxLength)
 	n, err := conn.Read(headerBytes)
-	if err != nil {
+	if n == 0 && err != nil {
 		return packet.FixedHeader{}, nil, err
 	}
 	headerBytesRead := n
@@ -247,14 +305,4 @@ func readPacket(conn net.Conn) (packet.FixedHeader, []byte, error) {
 	readBytes := append(headerBytes, packetBytes...)
 	fmt.Printf("read bytes: %x\n", readBytes)
 	return fixedHeader, readBytes, nil
-}
-
-func websocketUpgrade(w http.ResponseWriter, r *http.Request) {
-	conn, err := websocket.Accept(w, r, nil)
-	if err != nil {
-		fmt.Println("upgrade error:", err)
-		return
-	}
-	fmt.Println("upgrade to WebSocket")
-	handleConnection(websocket.NetConn(context.Background(), conn, websocket.MessageBinary))
 }
